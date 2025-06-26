@@ -4,6 +4,8 @@ html, body {
     height: 100%;
     width: 100%;
     margin: 0;
+    font-family: Inter, "SF Pro", "Segoe UI", Roboto, Oxygen, Ubuntu, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: large;
 }
 
 img {
@@ -11,24 +13,10 @@ img {
     width: 90%;
 }
 
-body {
-    display: flex;
-    height: calc(100% - 20px);
-    width: calc(100% - 20px);
-    gap: 10px;
-    margin: 10px;
-}
-
-.btns {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
 .speed {
     align-self: stretch;
     background-color: aqua;
-    width: 70px;
+    width: 80px;
 }
 
 .btn {
@@ -37,14 +25,165 @@ body {
     width: 70px;
 }
 
-.hor-btns {
+.wheels {
+    background-color: rgb(8, 0, 255);
+    height: 80px;
+    width: 160px;
+}
+
+.view0 {
+    position: absolute;
+    top: 0;
+    margin: 10px;
+    height: calc(100% - 20px);
+    width: calc(100% - 20px);
+}
+
+.view1 {
+    position: absolute;
+    top: 0;
+    margin: 20px;
+    height: calc(100% - 40px);
+    width: calc(100% - 40px);
+}
+
+
+
+
+
+.cols {
+    display: flex;
+}
+
+.colsi {
     display: flex;
     flex-direction: row-reverse;
+}
+
+.rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.grow {
+    flex-grow: 1;
+}
+
+.gap {
     gap: 10px;
 }
 
-.wheels {
-    background-color: aqua;
-    height: 70px;
-    width: 70px;
+.m0 {
+    margin: 10px;
+}
+
+.m1 {
+    margin: 20px;
+}
+
+.w100 {
+    width: 100%;
+}
+
+.h100 {
+    height: 100%;
+}
+
+.wh100 {
+    width: 100%;
+    height: 100%;
+}
+
+.end {
+	align-self: flex-end;
+}
+
+.space-between {
+	justify-content: space-between;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    background-color: #d9dadee8;
+    box-shadow: rgba(9, 10, 12, 0.1) 0px 8px 16px -2px, rgba(9, 10, 12, 0.02) 0px 0px 0px 1px;
+    color: rgb(64, 70, 84);
+    max-width: 100%;
+    position: relative;
+    border-radius: 8px;
+}
+
+.card-header {
+    height: 48px;
+    background-color: #d9dade85;
+    box-shadow: rgba(9, 10, 12, 0.1) 0px 2px 4px 0px;
+    box-sizing: border-box;
+    color: rgb(64, 70, 84);
+    display: flex;
+    font-size: 20px;
+    font-weight: 600;
+    padding-left: 10px;
+    align-items: center;
+}
+
+.card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    height: 100%;
+}
+
+input {
+    display: inline-flex;
+    align-items: center;
+    box-shadow: rgba(9, 10, 12, 0.05) 0px 1px 2px 0px inset;
+    border: 1px solid rgb(0, 26, 219);
+    border-radius: 6px;
+    padding: 11px;
+}
+
+button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgb(0, 184, 156);
+    border: 0;
+    box-shadow: rgba(51, 51, 51, 0) 0px 1px 2px 0px, rgba(51, 51, 51, 0) 0px 2px 4px 0px;
+    cursor: pointer;
+    height: 40px;
+    font-weight: 500;
+    padding: 16px;
+}
+
+.ltab {
+    display: flex;
+}
+
+.ltab ul {
+    margin: 10px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ltab li {
+    display: flex;
+    align-items: center;
+    list-style-position: outside;
+    list-style-type: none;
+    list-style-image: none;
+    width: 200px;
+    height: 30px;
+    background-color: blue;
+    border-radius: 8px;
+    border: 1 solid #d9dade85;
+    color: rgb(227, 210, 210);
+    font-weight: 500;
+    padding: 6px;
+}
+
+.ltab > div {
+    flex-grow: 1;
 }

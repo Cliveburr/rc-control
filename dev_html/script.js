@@ -1,9 +1,8 @@
 
-
-const img = document.getElementsByTagName('img')[0];
-//img.onload = () => {
+function makeView() {
+    const img = document.getElementsByTagName('img')[0];
     img.src = '/video?' + new Date().getTime();
-//};
+}
 
 // const ws = new WebSocket('/ws');
 // ws.binaryType = 'arraybuffer';
@@ -41,3 +40,79 @@ const img = document.getElementsByTagName('img')[0];
 // window.wsSend = (data) => {
 //     ws.send(data);
 // }
+
+class ViewInst {
+
+    constructor(template, parentCtx) {
+        this.parentCtx = parentCtx;
+        this.html = template.cloneNode(true);
+        this.ctx = {};
+    }
+
+    setOnclick(id, callback) {
+        const el = this.html.querySelector(`#${id}`);
+        el.onclick = callback;
+    }
+
+    close() {
+        document.body.removeChild(this.html);
+    }
+}
+
+class View {
+
+    constructor(id, ctr) {
+        this.ctr = ctr;
+        this.template = document.getElementById(id);
+        document.body.removeChild(this.template);
+    }
+
+    show(parentCtx) {
+
+        const inst = new ViewInst(this.template, parentCtx);
+
+        if (this.ctr) {
+            this.ctr(inst);
+        }
+
+        document.body.appendChild(inst.html);
+
+        return inst;
+    }
+}
+
+
+function mainCtr(view) {
+
+    view.setOnclick('btnNet', () => {
+
+        //console.log('hit');
+        const temp = views.netView.show();
+
+        // setTimeout(() => {
+        //     temp.close();
+        // }, 50000);
+
+    });
+
+}
+
+function netCtr(view) {
+
+    // view.setOnclick('conf_close', () => {
+    //     view.close();
+    // });
+
+}
+
+const views = {};
+
+function main() {
+
+    views.mainView = new View('mainView', mainCtr);
+    views.netView = new View('netView', netCtr);
+
+    views.mainView.show();
+}
+
+window.onload = main;
