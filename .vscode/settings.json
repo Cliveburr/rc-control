@@ -7,7 +7,7 @@
         "IDF_CCACHE_ENABLE": "1",
         "ESP_ROM_ELF_DIR": "D:\\ESP32\\tools\\tools\\esp-rom-elfs\\20230320/"
     },
-    "idf.espIdfPathWin": "D:\\ESP32\\v5.2\\esp-idf",
+    "idf.espIdfPathWin": "D:\\ESP32\\v5.5\\esp-idf",
     "idf.openOcdConfigs": [
         "interface/ftdi/esp32_devkitj_v1.cfg",
         "target/esp32.cfg"
@@ -34,5 +34,6 @@
         "span": "c",
         "esp_camera.h": "c",
         "http_server.h": "c"
-    }
+    },
+    "idf.pythonInstallPath": "D:\\ESP32\\tools\\tools\\idf-python\\3.11.2\\python.exe"
 }

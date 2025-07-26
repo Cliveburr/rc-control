@@ -84,10 +84,10 @@ class View {
 
 function mainCtr(view) {
 
-    view.setOnclick('btnNet', () => {
+    view.setOnclick('btnConfiguration', () => {
 
         //console.log('hit');
-        const temp = views.netView.show();
+        const temp = views.configurationView.show();
 
         // setTimeout(() => {
         //     temp.close();
@@ -110,7 +110,7 @@ const views = {};
 function main() {
 
     views.mainView = new View('mainView', mainCtr);
-    views.netView = new View('netView', netCtr);
+    views.configurationView = new View('configurationView', netCtr);
 
     views.mainView.show();
 }

@@ -156,11 +156,11 @@ button {
     padding: 16px;
 }
 
-.ltab {
+.tab-left {
     display: flex;
 }
 
-.ltab ul {
+.tab-left ul {
     margin: 10px;
     padding: 0;
     display: flex;
@@ -168,7 +168,7 @@ button {
     gap: 10px;
 }
 
-.ltab li {
+.tab-left li {
     display: flex;
     align-items: center;
     list-style-position: outside;
@@ -184,6 +184,6 @@ button {
     padding: 6px;
 }
 
-.ltab > div {
+.tab-left > div {
     flex-grow: 1;
 }
