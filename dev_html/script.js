@@ -74,20 +74,28 @@ function initWebSocket() {
 }
 
 function sendSpeedCommand(value) {
+    sendControlCommand('speed', value);
+}
+
+function sendWheelsCommand(value) {
+    sendControlCommand('wheels', value);
+}
+
+function sendControlCommand(type, value) {
     if (DEBUG) {
-        console.log('DEBUG mode: Speed command (visual test only):', value);
+        console.log(`DEBUG mode: ${type} command (visual test only):`, value);
         return;
     }
     
     if (ws && ws.readyState === WebSocket.OPEN) {
         const command = {
-            type: 'speed',
+            type: type,
             value: value
         };
         ws.send(JSON.stringify(command));
-        console.log('Speed command sent:', value);
+        console.log(`${type} command sent:`, value);
     } else {
-        console.warn('WebSocket not connected, cannot send speed command:', value);
+        console.warn(`WebSocket not connected, cannot send ${type} command:`, value);
     }
 }
 
@@ -128,91 +136,117 @@ function sendLightCommand(isOn) {
     }
 }
 
-function initSpeedControl() {
+function initGenericControl(controlType, sendCommandFunc) {
     // Aguardar o DOM estar pronto
-    const speedIndicator = document.getElementById('speedIndicator');
+    const controlIndicator = document.getElementById(`${controlType}Indicator`);
     
-    if (!speedIndicator) {
-        console.error('Speed control elements not found. Retrying in 100ms...');
-        setTimeout(initSpeedControl, 100);
+    if (!controlIndicator) {
+        console.error(`${controlType} control elements not found. Retrying in 100ms...`);
+        setTimeout(() => initGenericControl(controlType, sendCommandFunc), 100);
         return;
     }
     
-    const speedTrack = speedIndicator.parentElement;
+    const controlTrack = controlIndicator.parentElement;
+    const isVertical = controlType === 'speed';
     
     let isDragging = false;
-    let startY = 0;
-    let initialTop = 0;
-    const zeroPosition = 66.67; // 1/3 de baixo para cima em percentual
+    let startPos = 0;
+    let initialPosition = 0;
+    const zeroPosition = isVertical ? 66.67 : 50; // 1/3 de baixo para cima para speed, centro para wheels
     
-    // Função para calcular o valor da velocidade baseado na posição
-    function calculateSpeed(topPercent) {
-        // Mapear posição para velocidade (-100 a +100)
-        // Zero position é 66.67%
-        // Top (0%) = +100, Bottom (100%) = -100
-        const relativePosition = (zeroPosition - topPercent) / zeroPosition;
-        
-        if (topPercent < zeroPosition) {
-            // Acima do zero = velocidade positiva
-            return Math.round(relativePosition * 100);
+    // Função para calcular o valor baseado na posição
+    function calculateValue(positionPercent) {
+        if (isVertical) {
+            // Speed control (vertical) - mapear posição para velocidade (-100 a +100)
+            const relativePosition = (zeroPosition - positionPercent) / zeroPosition;
+            
+            if (positionPercent < zeroPosition) {
+                // Acima do zero = velocidade positiva
+                return Math.round(relativePosition * 100);
+            } else {
+                // Abaixo do zero = velocidade negativa
+                const belowZeroRange = 100 - zeroPosition;
+                const belowZeroPosition = (positionPercent - zeroPosition) / belowZeroRange;
+                return Math.round(-belowZeroPosition * 100);
+            }
         } else {
-            // Abaixo do zero = velocidade negativa
-            const belowZeroRange = 100 - zeroPosition;
-            const belowZeroPosition = (topPercent - zeroPosition) / belowZeroRange;
-            return Math.round(-belowZeroPosition * 100);
+            // Wheels control (horizontal) - mapear posição para direção (-100 a +100)
+            // 0% = -100 (esquerda), 50% = 0 (centro), 100% = +100 (direita)
+            return Math.round((positionPercent - 50) * 2);
         }
     }
     
     // Função para atualizar a posição e valor
-    function updateSpeed(topPercent) {
+    function updateControl(positionPercent) {
         // Limitar entre 0% e 100%
-        topPercent = Math.max(0, Math.min(100, topPercent));
+        positionPercent = Math.max(0, Math.min(100, positionPercent));
         
-        speedIndicator.style.top = topPercent + '%';
-        const speed = calculateSpeed(topPercent);
+        if (isVertical) {
+            controlIndicator.style.top = positionPercent + '%';
+        } else {
+            controlIndicator.style.left = positionPercent + '%';
+        }
+        
+        const value = calculateValue(positionPercent);
         
         // Enviar comando via WebSocket
-        sendSpeedCommand(speed);
+        sendCommandFunc(value);
     }
     
     // Função para retornar ao zero
     function returnToZero() {
-        speedIndicator.style.transition = 'top 0.3s ease-out';
-        updateSpeed(zeroPosition);
+        if (isVertical) {
+            controlIndicator.style.transition = 'top 0.3s ease-out';
+        } else {
+            controlIndicator.style.transition = 'left 0.3s ease-out';
+        }
+        updateControl(zeroPosition);
         
         setTimeout(() => {
-            speedIndicator.style.transition = 'top 0.1s ease-out';
+            if (isVertical) {
+                controlIndicator.style.transition = 'top 0.1s ease-out';
+            } else {
+                controlIndicator.style.transition = 'left 0.1s ease-out';
+            }
         }, 300);
     }
     
     // Event listeners para mouse
-    speedIndicator.addEventListener('mousedown', (e) => {
+    controlIndicator.addEventListener('mousedown', (e) => {
         isDragging = true;
-        startY = e.clientY;
-        initialTop = parseFloat(speedIndicator.style.top) || zeroPosition;
-        speedIndicator.style.transition = 'none';
+        startPos = isVertical ? e.clientY : e.clientX;
+        initialPosition = parseFloat(isVertical ? controlIndicator.style.top : controlIndicator.style.left) || zeroPosition;
+        controlIndicator.style.transition = 'none';
         e.preventDefault();
     });
 
     // Event listener para clique direto no track
-    speedTrack.addEventListener('mousedown', (e) => {
+    controlTrack.addEventListener('mousedown', (e) => {
         // Se o clique foi no indicador, deixar o handler dele cuidar
-        if (e.target === speedIndicator || speedIndicator.contains(e.target)) {
+        if (e.target === controlIndicator || controlIndicator.contains(e.target)) {
             return;
         }
         
-        const rect = speedTrack.getBoundingClientRect();
-        const clickY = e.clientY - rect.top;
-        const trackHeight = rect.height;
-        const clickPercent = (clickY / trackHeight) * 100;
+        const rect = controlTrack.getBoundingClientRect();
+        let clickPercent;
+        
+        if (isVertical) {
+            const clickY = e.clientY - rect.top;
+            const trackHeight = rect.height;
+            clickPercent = (clickY / trackHeight) * 100;
+        } else {
+            const clickX = e.clientX - rect.left;
+            const trackWidth = rect.width;
+            clickPercent = (clickX / trackWidth) * 100;
+        }
         
         isDragging = true;
-        startY = e.clientY;
-        initialTop = clickPercent;
-        speedIndicator.style.transition = 'none';
+        startPos = isVertical ? e.clientY : e.clientX;
+        initialPosition = clickPercent;
+        controlIndicator.style.transition = 'none';
         
         // Mover imediatamente para a posição clicada
-        updateSpeed(clickPercent);
+        updateControl(clickPercent);
         
         e.preventDefault();
     });
@@ -220,12 +254,12 @@ function initSpeedControl() {
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
         
-        const deltaY = e.clientY - startY;
-        const trackHeight = speedTrack.clientHeight;
-        const deltaPercent = (deltaY / trackHeight) * 100;
-        const newTop = initialTop + deltaPercent;
+        const deltaPos = (isVertical ? e.clientY : e.clientX) - startPos;
+        const trackSize = isVertical ? controlTrack.clientHeight : controlTrack.clientWidth;
+        const deltaPercent = (deltaPos / trackSize) * 100;
+        const newPosition = initialPosition + deltaPercent;
         
-        updateSpeed(newTop);
+        updateControl(newPosition);
         e.preventDefault();
     });
     
@@ -237,33 +271,41 @@ function initSpeedControl() {
     });
     
     // Event listeners para touch (dispositivos móveis)
-    speedIndicator.addEventListener('touchstart', (e) => {
+    controlIndicator.addEventListener('touchstart', (e) => {
         isDragging = true;
-        startY = e.touches[0].clientY;
-        initialTop = parseFloat(speedIndicator.style.top) || zeroPosition;
-        speedIndicator.style.transition = 'none';
+        startPos = isVertical ? e.touches[0].clientY : e.touches[0].clientX;
+        initialPosition = parseFloat(isVertical ? controlIndicator.style.top : controlIndicator.style.left) || zeroPosition;
+        controlIndicator.style.transition = 'none';
         e.preventDefault();
     });
 
     // Event listener para touch direto no track
-    speedTrack.addEventListener('touchstart', (e) => {
+    controlTrack.addEventListener('touchstart', (e) => {
         // Se o toque foi no indicador, deixar o handler dele cuidar
-        if (e.target === speedIndicator || speedIndicator.contains(e.target)) {
+        if (e.target === controlIndicator || controlIndicator.contains(e.target)) {
             return;
         }
         
-        const rect = speedTrack.getBoundingClientRect();
-        const touchY = e.touches[0].clientY - rect.top;
-        const trackHeight = rect.height;
-        const touchPercent = (touchY / trackHeight) * 100;
+        const rect = controlTrack.getBoundingClientRect();
+        let touchPercent;
+        
+        if (isVertical) {
+            const touchY = e.touches[0].clientY - rect.top;
+            const trackHeight = rect.height;
+            touchPercent = (touchY / trackHeight) * 100;
+        } else {
+            const touchX = e.touches[0].clientX - rect.left;
+            const trackWidth = rect.width;
+            touchPercent = (touchX / trackWidth) * 100;
+        }
         
         isDragging = true;
-        startY = e.touches[0].clientY;
-        initialTop = touchPercent;
-        speedIndicator.style.transition = 'none';
+        startPos = isVertical ? e.touches[0].clientY : e.touches[0].clientX;
+        initialPosition = touchPercent;
+        controlIndicator.style.transition = 'none';
         
         // Mover imediatamente para a posição tocada
-        updateSpeed(touchPercent);
+        updateControl(touchPercent);
         
         e.preventDefault();
     });
@@ -271,12 +313,12 @@ function initSpeedControl() {
     document.addEventListener('touchmove', (e) => {
         if (!isDragging) return;
         
-        const deltaY = e.touches[0].clientY - startY;
-        const trackHeight = speedTrack.clientHeight;
-        const deltaPercent = (deltaY / trackHeight) * 100;
-        const newTop = initialTop + deltaPercent;
+        const deltaPos = (isVertical ? e.touches[0].clientY : e.touches[0].clientX) - startPos;
+        const trackSize = isVertical ? controlTrack.clientHeight : controlTrack.clientWidth;
+        const deltaPercent = (deltaPos / trackSize) * 100;
+        const newPosition = initialPosition + deltaPercent;
         
-        updateSpeed(newTop);
+        updateControl(newPosition);
         e.preventDefault();
     });
     
@@ -288,7 +330,15 @@ function initSpeedControl() {
     });
     
     // Inicializar na posição zero
-    updateSpeed(zeroPosition);
+    updateControl(zeroPosition);
+}
+
+function initSpeedControl() {
+    initGenericControl('speed', sendSpeedCommand);
+}
+
+function initWheelsControl() {
+    initGenericControl('wheels', sendWheelsCommand);
 }
 
 class ViewInst {
@@ -346,9 +396,10 @@ class View {
 
 function mainCtr(view) {
 
-    // Inicializar controle de velocidade após o DOM estar pronto
+    // Inicializar controles após o DOM estar pronto
     setTimeout(() => {
         initSpeedControl();
+        initWheelsControl();
     }, 0);
 
     view.setOnclick('btnConfiguration', () => {

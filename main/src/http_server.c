@@ -70,6 +70,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
                     int speed_value = (int)value->valuedouble;
                     ESP_LOGI(TAG, "Received speed command: %d", speed_value);
                     process_speed_command(speed_value);
+                } else if (strcmp(command_type, "wheels") == 0) {
+                    int wheels_value = (int)value->valuedouble;
+                    ESP_LOGI(TAG, "Received wheels command: %d", wheels_value);
+                    process_wheels_command(wheels_value);
                 } else if (strcmp(command_type, "horn") == 0) {
                     int horn_value = (int)value->valuedouble;
                     ESP_LOGI(TAG, "Received horn command: %d", horn_value);
@@ -96,6 +100,14 @@ void process_speed_command(int speed_value)
 {
     ESP_LOGI(TAG, "Processing speed command: %d", speed_value);
     // TODO: Implement actual speed control logic here
+    // For now, just log the received value
+}
+
+void process_wheels_command(int wheels_value)
+{
+    ESP_LOGI(TAG, "Processing wheels command: %d", wheels_value);
+    // TODO: Implement actual wheels/steering control logic here
+    // wheels_value: -100 to +100 (-100 = full left, 0 = center, +100 = full right)
     // For now, just log the received value
 }
 

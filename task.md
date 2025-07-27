@@ -4,4 +4,4 @@
 
 ** Sempre reutilize metodos, classes ou códigos já existente.
 
-# Tarefa: Crie um aba na tab de configurações chamada "Info" para disponibilizar toda inofrmação possivel do ESP32, modelo, tamanho e consumo de todas memorias possiveis e  velocidade do processador, mostre essas informações de forma agradavel para humanos, faça esse request por websocket e se não estiver disponivel deixe tudo zerado
+# Tarefa: Implemente o botão "wheels" para funcionar da mesma forma que o botão speed, porém o indicador do "wheels" fica no centro e o gradie deve ser diferente, faça o style do botão e se repetir muita coisa do "wheels" crie classes genericas para não repetir código, faça a mesma coisa para as funções javascript, se repetir código crie funções para diminuir ao máximo repetição de código, faça a parte websocket e igual o speed, apenas faça o print do log

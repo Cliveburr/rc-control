@@ -10,12 +10,12 @@
     </head>
     <body>
         <div id="mainView" class="view0 cols gap">
-            <div class="speed">
+            <div class="speed control">
                 <div class="speed-control">
-                    <div class="speed-track">
-                        <div class="speed-zero-line"></div>
-                        <div class="speed-indicator" id="speedIndicator">
-                            <div class="speed-thumb"></div>
+                    <div class="speed-track control-track">
+                        <div class="speed-zero-line control-zero-line"></div>
+                        <div class="speed-indicator control-indicator" id="speedIndicator">
+                            <div class="speed-thumb control-thumb"></div>
                         </div>
                     </div>
                 </div>
@@ -35,8 +35,15 @@
                     </div>
                 </div>
                 <div class="colsi">
-                    <div class="wheels">
-
+                    <div class="wheels control">
+                        <div class="wheels-control">
+                            <div class="wheels-track control-track">
+                                <div class="wheels-zero-line control-zero-line"></div>
+                                <div class="wheels-indicator control-indicator" id="wheelsIndicator">
+                                    <div class="wheels-thumb control-thumb"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -259,17 +266,6 @@
                             </div>
                         </div>
                     </div>
-
-
-                    <!-- <label>Wifi name</label>
-                    <input id="wifiname" />
-                    <label>Wifi password</label>
-                    <input id="wifipassword" />
-                    <div class="grow"></div>
-                    <div class="cols gap end">
-                        <button id="conf_save">Salvar</button>
-                        <button id="conf_close">Fechar</button>
-                    </div> -->
                 </div>
             </div>
         </div>

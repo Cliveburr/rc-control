@@ -10,6 +10,7 @@ bool http_server_is_running(void);
 
 // WebSocket command handling
 void process_speed_command(int speed_value);
+void process_wheels_command(int wheels_value);
 void process_horn_command(int horn_value);
 void process_light_command(int light_value);
 
