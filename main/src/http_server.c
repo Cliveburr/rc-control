@@ -3,6 +3,12 @@
 #include <esp_log.h>
 #include <esp_http_server.h>
 #include <cJSON.h>
+#include <esp_system.h>
+#include <esp_chip_info.h>
+#include <esp_heap_caps.h>
+#include <soc/soc.h>
+#include <soc/rtc.h>
+#include <esp_partition.h>
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -107,6 +113,138 @@ void process_light_command(int light_value)
     // Control light LED based on command value
     // light_value: 1 = light ON, 0 = light OFF
     led_light_set(light_value != 0);
+}
+
+static esp_err_t system_info_handler(httpd_req_t *req)
+{
+    // Get chip information
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    
+    // Get memory information
+    size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    size_t used_heap = total_heap - free_heap;
+    
+    size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t used_psram = total_psram - free_psram;
+    
+    size_t total_dma = heap_caps_get_total_size(MALLOC_CAP_DMA);
+    size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    size_t used_dma = total_dma - free_dma;
+    
+    // Get IRAM information
+    size_t total_iram = heap_caps_get_total_size(MALLOC_CAP_IRAM_8BIT);
+    size_t free_iram = heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT);
+    size_t used_iram = total_iram - free_iram;
+    
+    // Get DRAM information (internal 8-bit accessible)
+    size_t total_dram = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t free_dram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t used_dram = total_dram - free_dram;
+    
+    // Get CPU frequency
+    rtc_cpu_freq_config_t cpu_config;
+    rtc_clk_cpu_freq_get_config(&cpu_config);
+    uint32_t cpu_freq = cpu_config.freq_mhz;
+    
+    // Get flash size from partition table
+    const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    uint32_t flash_size = 0;
+    if (partition != NULL) {
+        flash_size = partition->size + partition->address; // Approximate total flash size
+    }
+    
+    // Create JSON response
+    cJSON *json = cJSON_CreateObject();
+    cJSON *chip = cJSON_CreateObject();
+    cJSON *memory = cJSON_CreateObject();
+    cJSON *heap = cJSON_CreateObject();
+    cJSON *psram = cJSON_CreateObject();
+    cJSON *dma = cJSON_CreateObject();
+    cJSON *iram = cJSON_CreateObject();
+    cJSON *dram = cJSON_CreateObject();
+    
+    // Chip information
+    const char* chip_model;
+    switch(chip_info.model) {
+        case CHIP_ESP32: chip_model = "ESP32"; break;
+        case CHIP_ESP32S2: chip_model = "ESP32-S2"; break;
+        case CHIP_ESP32S3: chip_model = "ESP32-S3"; break;
+        case CHIP_ESP32C3: chip_model = "ESP32-C3"; break;
+        default: chip_model = "Unknown"; break;
+    }
+    
+    cJSON_AddStringToObject(chip, "model", chip_model);
+    cJSON_AddNumberToObject(chip, "cores", chip_info.cores);
+    cJSON_AddNumberToObject(chip, "revision", chip_info.revision);
+    cJSON_AddNumberToObject(chip, "cpu_freq_mhz", cpu_freq);
+    cJSON_AddBoolToObject(chip, "has_wifi", (chip_info.features & CHIP_FEATURE_WIFI_BGN) != 0);
+    cJSON_AddBoolToObject(chip, "has_bluetooth", (chip_info.features & CHIP_FEATURE_BT) != 0);
+    cJSON_AddBoolToObject(chip, "has_ble", (chip_info.features & CHIP_FEATURE_BLE) != 0);
+    cJSON_AddNumberToObject(chip, "flash_size_mb", flash_size / (1024 * 1024));
+    
+    // Heap memory
+    cJSON_AddNumberToObject(heap, "total_bytes", total_heap);
+    cJSON_AddNumberToObject(heap, "used_bytes", used_heap);
+    cJSON_AddNumberToObject(heap, "free_bytes", free_heap);
+    cJSON_AddNumberToObject(heap, "usage_percent", (used_heap * 100) / total_heap);
+    
+    // PSRAM memory
+    if (total_psram > 0) {
+        cJSON_AddNumberToObject(psram, "total_bytes", total_psram);
+        cJSON_AddNumberToObject(psram, "used_bytes", used_psram);
+        cJSON_AddNumberToObject(psram, "free_bytes", free_psram);
+        cJSON_AddNumberToObject(psram, "usage_percent", (used_psram * 100) / total_psram);
+    } else {
+        cJSON_AddNumberToObject(psram, "total_bytes", 0);
+        cJSON_AddNumberToObject(psram, "used_bytes", 0);
+        cJSON_AddNumberToObject(psram, "free_bytes", 0);
+        cJSON_AddNumberToObject(psram, "usage_percent", 0);
+    }
+    
+    // DMA memory
+    cJSON_AddNumberToObject(dma, "total_bytes", total_dma);
+    cJSON_AddNumberToObject(dma, "used_bytes", used_dma);
+    cJSON_AddNumberToObject(dma, "free_bytes", free_dma);
+    cJSON_AddNumberToObject(dma, "usage_percent", (used_dma * 100) / total_dma);
+    
+    // IRAM memory
+    cJSON_AddNumberToObject(iram, "total_bytes", total_iram);
+    cJSON_AddNumberToObject(iram, "used_bytes", used_iram);
+    cJSON_AddNumberToObject(iram, "free_bytes", free_iram);
+    cJSON_AddNumberToObject(iram, "usage_percent", total_iram > 0 ? (used_iram * 100) / total_iram : 0);
+    
+    // DRAM memory
+    cJSON_AddNumberToObject(dram, "total_bytes", total_dram);
+    cJSON_AddNumberToObject(dram, "used_bytes", used_dram);
+    cJSON_AddNumberToObject(dram, "free_bytes", free_dram);
+    cJSON_AddNumberToObject(dram, "usage_percent", total_dram > 0 ? (used_dram * 100) / total_dram : 0);
+    
+    // Add memory objects to memory
+    cJSON_AddItemToObject(memory, "heap", heap);
+    cJSON_AddItemToObject(memory, "psram", psram);
+    cJSON_AddItemToObject(memory, "dma", dma);
+    cJSON_AddItemToObject(memory, "iram", iram);
+    cJSON_AddItemToObject(memory, "dram", dram);
+    
+    // Add main objects to JSON
+    cJSON_AddItemToObject(json, "chip", chip);
+    cJSON_AddItemToObject(json, "memory", memory);
+    
+    // Convert to string and send response
+    char *json_string = cJSON_Print(json);
+    
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t ret = httpd_resp_send(req, json_string, strlen(json_string));
+    
+    // Clean up
+    free(json_string);
+    cJSON_Delete(json);
+    
+    return ret;
 }
 
 static esp_err_t httpd_get_handler(httpd_req_t *req)
@@ -260,6 +398,14 @@ void http_server_start(void)
         .user_ctx  = NULL
     };
     httpd_register_uri_handler(server, &ota_restart);
+
+    httpd_uri_t system_info = {
+        .uri       = "/api/system-info",
+        .method    = HTTP_GET,
+        .handler   = system_info_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &system_info);
 
     httpd_uri_t httpd_get = {
         .uri       = "/*",

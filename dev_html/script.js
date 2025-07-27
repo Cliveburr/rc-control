@@ -437,11 +437,17 @@ function netCtr(view) {
     // Load OTA status when OTA tab is clicked
     view.html.querySelector('#tabOTA').addEventListener('click', loadOTAStatus);
     
+    // Load system info when Info tab is clicked
+    view.html.querySelector('#tabInfo').addEventListener('click', loadSystemInfo);
+    
     // WiFi configuration save
     view.html.querySelector('#saveWifiConfig').addEventListener('click', saveWifiConfig);
     
     // OTA upload functionality
     view.html.querySelector('#uploadOTA').addEventListener('click', uploadOTAFirmware);
+    
+    // System info refresh button
+    view.html.querySelector('#refreshSystemInfo').addEventListener('click', loadSystemInfo);
     
     // Close button (if added later)
     // view.setOnclick('conf_close', () => {
@@ -556,6 +562,162 @@ async function uploadOTAFirmware() {
         uploadButton.textContent = 'Atualizar Firmware';
         progressContainer.style.display = 'none';
     }
+}
+
+async function loadSystemInfo() {
+    try {
+        // Show loading state
+        resetSystemInfoDisplay();
+        
+        let response;
+        if (DEBUG) {
+            // Mock data for debug mode
+            response = {
+                ok: true,
+                json: async () => ({
+                    chip: {
+                        model: "ESP32-S3",
+                        cores: 2,
+                        revision: 3,
+                        cpu_freq_mhz: 240,
+                        has_wifi: true,
+                        has_bluetooth: true,
+                        has_ble: true,
+                        flash_size_mb: 16
+                    },
+                    memory: {
+                        heap: {
+                            total_bytes: 327680,
+                            used_bytes: 98304,
+                            free_bytes: 229376,
+                            usage_percent: 30
+                        },
+                        psram: {
+                            total_bytes: 8388608,
+                            used_bytes: 1048576,
+                            free_bytes: 7340032,
+                            usage_percent: 12
+                        },
+                        dma: {
+                            total_bytes: 262144,
+                            used_bytes: 32768,
+                            free_bytes: 229376,
+                            usage_percent: 12
+                        },
+                        iram: {
+                            total_bytes: 131072,
+                            used_bytes: 65536,
+                            free_bytes: 65536,
+                            usage_percent: 50
+                        },
+                        dram: {
+                            total_bytes: 524288,
+                            used_bytes: 157286,
+                            free_bytes: 367002,
+                            usage_percent: 30
+                        }
+                    }
+                })
+            };
+        } else {
+            response = await fetch('/api/system-info');
+        }
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch system info');
+        }
+        
+        const data = await response.json();
+        updateSystemInfoDisplay(data);
+        
+    } catch (error) {
+        console.error('Erro ao carregar informações do sistema:', error);
+        showSystemInfoError();
+    }
+}
+
+function resetSystemInfoDisplay() {
+    // Reset all display values to loading state
+    const elements = [
+        'chipModel', 'chipCores', 'chipRevision', 'cpuFreq',
+        'hasWifi', 'hasBluetooth', 'flashSize',
+        'heapTotal', 'heapUsed', 'heapFree', 'heapUsage',
+        'psramTotal', 'psramUsed', 'psramFree', 'psramUsage',
+        'dmaTotal', 'dmaUsed', 'dmaFree', 'dmaUsage',
+        'iramTotal', 'iramUsed', 'iramFree', 'iramUsage',
+        'dramTotal', 'dramUsed', 'dramFree', 'dramUsage'
+    ];
+    
+    elements.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = 'Carregando...';
+        }
+    });
+    
+    // Reset progress bars
+    ['heapProgressBar', 'psramProgressBar', 'dmaProgressBar', 'iramProgressBar', 'dramProgressBar'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.style.width = '0%';
+        }
+    });
+}
+
+function updateSystemInfoDisplay(data) {
+    // Update chip information
+    document.getElementById('chipModel').textContent = data.chip.model || '--';
+    document.getElementById('chipCores').textContent = data.chip.cores || '--';
+    document.getElementById('chipRevision').textContent = data.chip.revision || '--';
+    document.getElementById('cpuFreq').textContent = (data.chip.cpu_freq_mhz || '--') + ' MHz';
+    document.getElementById('hasWifi').textContent = data.chip.has_wifi ? 'Sim' : 'Não';
+    document.getElementById('hasBluetooth').textContent = data.chip.has_bluetooth ? 'Sim' : 'Não';
+    document.getElementById('flashSize').textContent = (data.chip.flash_size_mb || '--') + ' MB';
+    
+    // Update memory information
+    updateMemoryInfo('heap', data.memory.heap);
+    updateMemoryInfo('psram', data.memory.psram);
+    updateMemoryInfo('dma', data.memory.dma);
+    updateMemoryInfo('iram', data.memory.iram);
+    updateMemoryInfo('dram', data.memory.dram);
+}
+
+function updateMemoryInfo(type, memInfo) {
+    const totalKB = Math.round(memInfo.total_bytes / 1024);
+    const usedKB = Math.round(memInfo.used_bytes / 1024);
+    const freeKB = Math.round(memInfo.free_bytes / 1024);
+    const usagePercent = memInfo.usage_percent || 0;
+    
+    // Update individual values
+    document.getElementById(type + 'Total').textContent = totalKB + ' KB';
+    document.getElementById(type + 'Used').textContent = usedKB + ' KB';
+    document.getElementById(type + 'Free').textContent = freeKB + ' KB';
+    document.getElementById(type + 'Usage').textContent = `${usedKB} / ${totalKB} KB (${usagePercent}%)`;
+    
+    // Update progress bar
+    const progressBar = document.getElementById(type + 'ProgressBar');
+    if (progressBar) {
+        progressBar.style.width = usagePercent + '%';
+    }
+}
+
+function showSystemInfoError() {
+    const elements = [
+        'chipModel', 'chipCores', 'chipRevision', 'cpuFreq',
+        'hasWifi', 'hasBluetooth', 'flashSize',
+        'heapTotal', 'heapUsed', 'heapFree', 'heapUsage',
+        'psramTotal', 'psramUsed', 'psramFree', 'psramUsage',
+        'dmaTotal', 'dmaUsed', 'dmaFree', 'dmaUsage',
+        'iramTotal', 'iramUsed', 'iramFree', 'iramUsage',
+        'dramTotal', 'dramUsed', 'dramFree', 'dramUsage'
+    ];
+    
+    elements.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = 'Erro';
+        }
+    });
 }
 
 const views = {};

@@ -52,7 +52,8 @@
                         <ul>
                             <li id="tabGeneral" class="tab-item active">General</li>
                             <li id="tabWifi" class="tab-item">Wifi</li>
-                            <li id="tabOTA" class="tab-item">OTA</li>
+                            <li id="tabOTA" class="tab-item">Update</li>
+                            <li id="tabInfo" class="tab-item">Info</li>
                         </ul>
                         <div class="tab-content">
                             <div id="tabGeneralContent" class="tab-panel active">
@@ -74,7 +75,7 @@
                                 </div>
                             </div>
                             <div id="tabOTAContent" class="tab-panel">
-                                <h3>Atualização OTA</h3>
+                                <h3>Atualização</h3>
                                 <div id="otaStatus" class="status-info">
                                     Carregando informações...
                                 </div>
@@ -88,6 +89,172 @@
                                         <div id="progressBar" class="progress-fill"></div>
                                     </div>
                                     <div id="progressText">0%</div>
+                                </div>
+                            </div>
+                            <div id="tabInfoContent" class="tab-panel">
+                                <h3>Informações do Sistema</h3>
+                                <div id="systemInfo" class="system-info">
+                                    <div class="info-section">
+                                        <h4>Chip</h4>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Modelo:</span>
+                                                <span id="chipModel" class="info-value">--</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Núcleos:</span>
+                                                <span id="chipCores" class="info-value">--</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Revisão:</span>
+                                                <span id="chipRevision" class="info-value">--</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Frequência CPU:</span>
+                                                <span id="cpuFreq" class="info-value">-- MHz</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">WiFi:</span>
+                                                <span id="hasWifi" class="info-value">--</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Bluetooth:</span>
+                                                <span id="hasBluetooth" class="info-value">--</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Flash:</span>
+                                                <span id="flashSize" class="info-value">-- MB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Memória Heap (Região da RAM usada para alocação dinâmica)</h4>
+                                        <div class="memory-bar">
+                                            <div class="memory-progress">
+                                                <div id="heapProgressBar" class="memory-fill"></div>
+                                            </div>
+                                            <div class="memory-text">
+                                                <span id="heapUsage">-- / -- KB (-- %)</span>
+                                            </div>
+                                        </div>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Total:</span>
+                                                <span id="heapTotal" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Usado:</span>
+                                                <span id="heapUsed" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Livre:</span>
+                                                <span id="heapFree" class="info-value">-- KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Memória PSRAM (RAM externa)</h4>
+                                        <div class="memory-bar">
+                                            <div class="memory-progress">
+                                                <div id="psramProgressBar" class="memory-fill"></div>
+                                            </div>
+                                            <div class="memory-text">
+                                                <span id="psramUsage">-- / -- KB (-- %)</span>
+                                            </div>
+                                        </div>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Total:</span>
+                                                <span id="psramTotal" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Usado:</span>
+                                                <span id="psramUsed" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Livre:</span>
+                                                <span id="psramFree" class="info-value">-- KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Memória DMA (Direct Memory Access)</h4>
+                                        <div class="memory-bar">
+                                            <div class="memory-progress">
+                                                <div id="dmaProgressBar" class="memory-fill"></div>
+                                            </div>
+                                            <div class="memory-text">
+                                                <span id="dmaUsage">-- / -- KB (-- %)</span>
+                                            </div>
+                                        </div>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Total:</span>
+                                                <span id="dmaTotal" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Usado:</span>
+                                                <span id="dmaUsed" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Livre:</span>
+                                                <span id="dmaFree" class="info-value">-- KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Memória IRAM (Instruction RAM)</h4>
+                                        <div class="memory-bar">
+                                            <div class="memory-progress">
+                                                <div id="iramProgressBar" class="memory-fill"></div>
+                                            </div>
+                                            <div class="memory-text">
+                                                <span id="iramUsage">-- / -- KB (-- %)</span>
+                                            </div>
+                                        </div>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Total:</span>
+                                                <span id="iramTotal" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Usado:</span>
+                                                <span id="iramUsed" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Livre:</span>
+                                                <span id="iramFree" class="info-value">-- KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Memória DRAM (Data RAM)</h4>
+                                        <div class="memory-bar">
+                                            <div class="memory-progress">
+                                                <div id="dramProgressBar" class="memory-fill"></div>
+                                            </div>
+                                            <div class="memory-text">
+                                                <span id="dramUsage">-- / -- KB (-- %)</span>
+                                            </div>
+                                        </div>
+                                        <div class="info-grid">
+                                            <div class="info-item">
+                                                <span class="info-label">Total:</span>
+                                                <span id="dramTotal" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Usado:</span>
+                                                <span id="dramUsed" class="info-value">-- KB</span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Livre:</span>
+                                                <span id="dramFree" class="info-value">-- KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="button-group">
+                                        <button id="refreshSystemInfo">Atualizar Informações</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

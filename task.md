@@ -4,4 +4,4 @@
 
 ** Sempre reutilize metodos, classes ou códigos já existente.
 
-# Tarefa: Implemente do lado do ESP32 para ascender um led pelas portas nos comandos da luz e da buzina, pode usar qualquer porta livre do ESP32 e considerando a ligação dos leds no modo Sinking
+# Tarefa: Crie um aba na tab de configurações chamada "Info" para disponibilizar toda inofrmação possivel do ESP32, modelo, tamanho e consumo de todas memorias possiveis e  velocidade do processador, mostre essas informações de forma agradavel para humanos, faça esse request por websocket e se não estiver disponivel deixe tudo zerado
