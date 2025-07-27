@@ -44,6 +44,7 @@ img {
     position: relative;
     box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
     border: 2px solid #333;
+    cursor: pointer;
 }
 
 .speed-zero-line {
@@ -63,16 +64,16 @@ img {
     top: 66.67%; /* Posição zero inicial - 1/3 de baixo para cima */
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 40px;
-    height: 40px;
+    width: 90px;
+    height: 20px;
     z-index: 1;
     cursor: pointer;
     transition: top 0.1s ease-out;
 }
 
 .speed-thumb {
-    width: 40px;
-    height: 40px;
+    width: 87px;
+    height: 18px;
     background: radial-gradient(circle, #ffffff 0%, #e0e0e0 70%, #999999 100%);
     border: 3px solid #333;
     border-radius: 50%;
@@ -94,33 +95,6 @@ img {
 .speed-thumb:active {
     transform: scale(1.1);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
-}
-
-/* Responsividade para dispositivos móveis */
-@media (max-width: 768px) {
-    .speed {
-        width: 100px;
-    }
-    
-    .speed-control {
-        width: 70px;
-    }
-    
-    .speed-indicator {
-        width: 35px;
-        height: 35px;
-    }
-    
-    .speed-thumb {
-        width: 35px;
-        height: 35px;
-    }
-    
-    .speed-value {
-        font-size: 14px;
-        padding: 6px 10px;
-        min-width: 50px;
-    }
 }
 
 /* Evitar seleção de texto durante o drag */
@@ -158,6 +132,44 @@ img {
 .btn-config:hover {
     background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
     transform: scale(1.05) rotate(90deg);
+}
+
+.btn-horn {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    color: white;
+    font-size: 24px;
+    box-shadow: 0 4px 8px rgba(255, 107, 107, 0.3);
+}
+
+.btn-horn:hover {
+    background: linear-gradient(135deg, #ff5252 0%, #d63031 100%);
+    transform: scale(1.1);
+    box-shadow: 0 6px 12px rgba(255, 107, 107, 0.4);
+}
+
+.btn-horn.active {
+    transform: scale(0.95);
+    box-shadow: 0 0 20px rgba(255, 107, 107, 0.8), 0 0 40px rgba(255, 107, 107, 0.4);
+}
+
+.btn-light {
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    color: #adb5bd;
+    font-size: 24px;
+    box-shadow: 0 4px 8px rgba(108, 117, 125, 0.3);
+    transition: all 0.3s ease;
+}
+
+.btn-light:hover {
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    color: #adb5bd;
+    box-shadow: 0 4px 8px rgba(108, 117, 125, 0.3);
+}
+
+.btn-light.active {
+    background: linear-gradient(135deg, #ffc107 0%, #ffca2c 100%) !important;
+    color: #212529 !important;
+    box-shadow: 0 0 20px rgba(255, 193, 7, 0.8), 0 0 40px rgba(255, 193, 7, 0.4) !important;
 }
 
 .wheels {

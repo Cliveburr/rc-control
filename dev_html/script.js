@@ -91,6 +91,43 @@ function sendSpeedCommand(value) {
     }
 }
 
+function sendHornCommand(isPressed) {
+    if (DEBUG) {
+        console.log('DEBUG mode: Horn command (visual test only):', isPressed);
+        return;
+    }
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const command = {
+            type: 'horn',
+            value: isPressed ? 1 : 0
+        };
+        ws.send(JSON.stringify(command));
+        console.log('Horn command sent:', isPressed);
+    } else {
+        console.warn('WebSocket not connected, cannot send horn command:', isPressed);
+    }
+}
+
+function sendLightCommand(isOn) {
+    console.log('sendLightCommand called with:', isOn);
+    if (DEBUG) {
+        console.log('DEBUG mode: Light command (visual test only):', isOn);
+        return;
+    }
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const command = {
+            type: 'light',
+            value: isOn ? 1 : 0
+        };
+        ws.send(JSON.stringify(command));
+        console.log('Light command sent:', isOn);
+    } else {
+        console.warn('WebSocket not connected, cannot send light command:', isOn);
+    }
+}
+
 function initSpeedControl() {
     // Aguardar o DOM estar pronto
     const speedIndicator = document.getElementById('speedIndicator');
@@ -156,6 +193,29 @@ function initSpeedControl() {
         speedIndicator.style.transition = 'none';
         e.preventDefault();
     });
+
+    // Event listener para clique direto no track
+    speedTrack.addEventListener('mousedown', (e) => {
+        // Se o clique foi no indicador, deixar o handler dele cuidar
+        if (e.target === speedIndicator || speedIndicator.contains(e.target)) {
+            return;
+        }
+        
+        const rect = speedTrack.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const trackHeight = rect.height;
+        const clickPercent = (clickY / trackHeight) * 100;
+        
+        isDragging = true;
+        startY = e.clientY;
+        initialTop = clickPercent;
+        speedIndicator.style.transition = 'none';
+        
+        // Mover imediatamente para a posição clicada
+        updateSpeed(clickPercent);
+        
+        e.preventDefault();
+    });
     
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
@@ -182,6 +242,29 @@ function initSpeedControl() {
         startY = e.touches[0].clientY;
         initialTop = parseFloat(speedIndicator.style.top) || zeroPosition;
         speedIndicator.style.transition = 'none';
+        e.preventDefault();
+    });
+
+    // Event listener para touch direto no track
+    speedTrack.addEventListener('touchstart', (e) => {
+        // Se o toque foi no indicador, deixar o handler dele cuidar
+        if (e.target === speedIndicator || speedIndicator.contains(e.target)) {
+            return;
+        }
+        
+        const rect = speedTrack.getBoundingClientRect();
+        const touchY = e.touches[0].clientY - rect.top;
+        const trackHeight = rect.height;
+        const touchPercent = (touchY / trackHeight) * 100;
+        
+        isDragging = true;
+        startY = e.touches[0].clientY;
+        initialTop = touchPercent;
+        speedIndicator.style.transition = 'none';
+        
+        // Mover imediatamente para a posição tocada
+        updateSpeed(touchPercent);
+        
         e.preventDefault();
     });
     
@@ -278,6 +361,56 @@ function mainCtr(view) {
         // }, 50000);
 
     });
+
+    // Initialize horn button
+    const hornBtn = view.html.querySelector('#btnHorn');
+    if (hornBtn) {
+        hornBtn.addEventListener('mousedown', () => {
+            hornBtn.classList.add('active');
+            sendHornCommand(true);
+        });
+        
+        hornBtn.addEventListener('mouseup', () => {
+            hornBtn.classList.remove('active');
+            sendHornCommand(false);
+        });
+        
+        hornBtn.addEventListener('mouseleave', () => {
+            hornBtn.classList.remove('active');
+            sendHornCommand(false);
+        });
+        
+        // Touch events for mobile
+        hornBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            hornBtn.classList.add('active');
+            sendHornCommand(true);
+        });
+        
+        hornBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            hornBtn.classList.remove('active');
+            sendHornCommand(false);
+        });
+    }
+
+    // Initialize light button (toggle behavior)
+    const lightBtn = view.html.querySelector('#btnLight');
+    let lightState = false;
+    if (lightBtn) {
+        lightBtn.addEventListener('click', () => {
+            lightState = !lightState;
+            
+            if (lightState) {
+                lightBtn.classList.add('active');
+            } else {
+                lightBtn.classList.remove('active');
+            }
+            sendLightCommand(lightState);
+        });
+    } else {
+        console.error('Light button not found!');
+    }
 
 }
 

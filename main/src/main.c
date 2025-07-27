@@ -4,6 +4,7 @@
 #include "config.h"
 #include "net.h"
 #include "ota.h"
+#include "led_control.h"
 
 // #include <sys/unistd.h>
 // #include "esp_log.h"
@@ -23,6 +24,8 @@ void app_main(void)
     // ESP_LOGI("test", "file size: %d", index_html_size);
 
     config_init();
+
+    led_control_init();
 
     ota_init();
 

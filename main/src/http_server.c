@@ -13,6 +13,7 @@ static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 //#include "cam.h"
 #include "ota.h"
 #include "esp_camera.h"
+#include "led_control.h"
 
 static const char *TAG = "http_server";
 static httpd_handle_t server = NULL;
@@ -63,6 +64,14 @@ static esp_err_t ws_handler(httpd_req_t *req)
                     int speed_value = (int)value->valuedouble;
                     ESP_LOGI(TAG, "Received speed command: %d", speed_value);
                     process_speed_command(speed_value);
+                } else if (strcmp(command_type, "horn") == 0) {
+                    int horn_value = (int)value->valuedouble;
+                    ESP_LOGI(TAG, "Received horn command: %d", horn_value);
+                    process_horn_command(horn_value);
+                } else if (strcmp(command_type, "light") == 0) {
+                    int light_value = (int)value->valuedouble;
+                    ESP_LOGI(TAG, "Received light command: %d", light_value);
+                    process_light_command(light_value);
                 }
             }
             
@@ -82,6 +91,22 @@ void process_speed_command(int speed_value)
     ESP_LOGI(TAG, "Processing speed command: %d", speed_value);
     // TODO: Implement actual speed control logic here
     // For now, just log the received value
+}
+
+void process_horn_command(int horn_value)
+{
+    ESP_LOGI(TAG, "Processing horn command: %d", horn_value);
+    // Control horn LED based on command value
+    // horn_value: 1 = horn ON, 0 = horn OFF
+    led_horn_set(horn_value != 0);
+}
+
+void process_light_command(int light_value)
+{
+    ESP_LOGI(TAG, "Processing light command: %d", light_value);
+    // Control light LED based on command value
+    // light_value: 1 = light ON, 0 = light OFF
+    led_light_set(light_value != 0);
 }
 
 static esp_err_t httpd_get_handler(httpd_req_t *req)

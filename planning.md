@@ -11,11 +11,13 @@ Projeto Html:
     - Todo javascript deve ficar no único arquivo "script.js"
     - Todo CSS deve ficar no único arquivo "style.css"
     - Maxima otimização do JS e CSS
+    - Preparado para Landscape mode
 
 Project ESP32:
     Folder: /main
     - Arquivo /main/wwwroot/index.html é gerado pelo script "\dev_html> node run prod"
     - O OTA vai ser enviado pelo HTML
+    - Os LED devem sempre estar configurado no modo Sinking (Dreno de corrente – Negativo direto no LED)
 
 Views:
     Main:
