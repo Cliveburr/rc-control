@@ -1,7 +1,7 @@
 #include <sys/unistd.h>
-#include "esp_log.h"
-#include "esp_http_server.h"
-#include "esp_timer.h"
+#include <esp_timer.h>
+#include <esp_log.h>
+#include <esp_http_server.h>
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -10,6 +10,7 @@ static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 
 #include "http_server.h"
 #include "cam.h"
+#include "ota.h"
 #include "esp_camera.h"
 
 static const char *TAG = "http_server";
@@ -214,7 +215,12 @@ esp_err_t jpg_stream_httpd_handler(httpd_req_t *req)
 
 void http_server_start(void)
 {
-    cam_start_camera();
+    if (server != NULL) {
+        ESP_LOGW(TAG, "HTTP server is already running");
+        return;
+    }
+
+    //cam_start_camera();
     
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
@@ -238,6 +244,30 @@ void http_server_start(void)
     };
     httpd_register_uri_handler(server, &httpd_video);
 
+    httpd_uri_t ota_upload = {
+        .uri       = "/ota/upload",
+        .method    = HTTP_POST,
+        .handler   = ota_upload_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &ota_upload);
+
+    httpd_uri_t ota_status = {
+        .uri       = "/ota/status",
+        .method    = HTTP_GET,
+        .handler   = ota_status_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &ota_status);
+
+    httpd_uri_t ota_restart = {
+        .uri       = "/ota/restart",
+        .method    = HTTP_POST,
+        .handler   = ota_restart_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &ota_restart);
+
     httpd_uri_t httpd_get = {
         .uri       = "/*",
         .method    = HTTP_GET,
@@ -249,6 +279,17 @@ void http_server_start(void)
 
 void http_server_stop(void)
 {
-    ESP_ERROR_CHECK(httpd_stop(server));
-    server = NULL;
+    if (server != NULL) {
+        ESP_LOGI(TAG, "Stopping HTTP server");
+        ESP_ERROR_CHECK(httpd_stop(server));
+        server = NULL;
+        ESP_LOGI(TAG, "HTTP server stopped successfully");
+    } else {
+        ESP_LOGI(TAG, "HTTP server stop requested, but server is not running");
+    }
+}
+
+bool http_server_is_running(void)
+{
+    return server != NULL;
 }

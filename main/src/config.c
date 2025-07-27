@@ -1,8 +1,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <esp_log.h>
-#include "nvs.h"
-#include "nvs_flash.h"
+#include <nvs.h>
+#include <nvs_flash.h>
 
 #include "config.h"
 

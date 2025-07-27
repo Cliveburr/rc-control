@@ -1,8 +1,9 @@
 #include <esp_log.h>
-#include "../../../../v5.2/esp-idf/components/soc/esp32c2/include/soc/rtc_cntl_reg.h"
+//#include "../../../../v5.2/esp-idf/components/soc/esp32c2/include/soc/rtc_cntl_reg.h"
 
 #include "config.h"
 #include "net.h"
+#include "ota.h"
 
 // #include <sys/unistd.h>
 // #include "esp_log.h"
@@ -16,12 +17,14 @@
 void app_main(void)
 {
     //TODO: remove this line and fix error: Brownout detector was triggered
-    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+    //WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
     // const size_t index_html_size = (index_html_end - index_html_start);
     // ESP_LOGI("test", "file size: %d", index_html_size);
 
     config_init();
+
+    ota_init();
 
     net_init();
 

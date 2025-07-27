@@ -33,11 +33,47 @@
                 <div class="card-body">
                     <div class="tab-left">
                         <ul>
-                            <li class="active">General</li>
-                            <li>Wifi</li>
+                            <li id="tabGeneral" class="tab-item active">General</li>
+                            <li id="tabWifi" class="tab-item">Wifi</li>
+                            <li id="tabOTA" class="tab-item">OTA</li>
                         </ul>
-                        <div>This is general</div>
-                        <!-- <div>wififi</div> -->
+                        <div class="tab-content">
+                            <div id="tabGeneralContent" class="tab-panel active">
+                                <h3>Configuração Geral</h3>
+                                <label>Tipo de Conexão:</label>
+                                <select id="connectionType">
+                                    <option value="wifi">WiFi</option>
+                                    <option value="bluetooth">Bluetooth</option>
+                                </select>
+                            </div>
+                            <div id="tabWifiContent" class="tab-panel">
+                                <h3>Configuração WiFi</h3>
+                                <label>Nome do WiFi (SSID):</label>
+                                <input id="wifiSsid" type="text" placeholder="Nome da rede WiFi" />
+                                <label>Senha do WiFi:</label>
+                                <input id="wifiPassword" type="password" placeholder="Senha da rede WiFi" />
+                                <div class="button-group">
+                                    <button id="saveWifiConfig">Gravar</button>
+                                </div>
+                            </div>
+                            <div id="tabOTAContent" class="tab-panel">
+                                <h3>Atualização OTA</h3>
+                                <div id="otaStatus" class="status-info">
+                                    Carregando informações...
+                                </div>
+                                <label>Selecionar arquivo .bin:</label>
+                                <input id="otaFile" type="file" accept=".bin" />
+                                <div class="button-group">
+                                    <button id="uploadOTA">Atualizar Firmware</button>
+                                </div>
+                                <div id="otaProgress" class="progress-container" style="display: none;">
+                                    <div class="progress-bar">
+                                        <div id="progressBar" class="progress-fill"></div>
+                                    </div>
+                                    <div id="progressText">0%</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
 

@@ -1,8 +1,9 @@
 #include <string.h>
-#include "esp_log.h"
-#include "esp_event.h"
-#include "esp_wifi.h"
-#include "esp_mac.h"
+#include <esp_log.h>
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_wifi.h>
+#include <esp_mac.h>
 
 #include "config.h"
 #include "http_server.h"
@@ -159,6 +160,7 @@ void net_init_to(config_net_mode_t net_mode)
     }
     if (acual_mode == config_net_mode_softap || acual_mode == config_net_mode_station)
     {
+        ESP_LOGI(TAG, "Stopping HTTP server and WiFi (current mode: %d)", acual_mode);
         http_server_stop();
         ESP_ERROR_CHECK(esp_wifi_stop());
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
