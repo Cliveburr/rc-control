@@ -11,6 +11,12 @@ const prod_path = path.resolve('../main/wwwroot/index.html');
 htmlInlineExternal({src: 'index.html'})
     .then(output => {
 
+        const removeDEBUG = 'const DEBUG = true;';
+        if (output.indexOf(removeDEBUG) > -1) {
+            output = output.replace(removeDEBUG, 'const DEBUG = false;');
+            console.log('DEBUG false!');
+        }
+
         // https://www.npmjs.com/package/html-minifier
         const index_min = minify(output, {
             collapseWhitespace: true,

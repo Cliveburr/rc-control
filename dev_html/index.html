@@ -3,19 +3,33 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Teste um</title>
+        <title>RC Control</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <link rel="stylesheet" href="style.css">
         <script src="script.js"></script>
     </head>
     <body>
         <div id="mainView" class="view0 cols gap">
             <div class="speed">
+                <div class="speed-control">
+                    <div class="speed-track">
+                        <div class="speed-zero-line"></div>
+                        <div class="speed-indicator" id="speedIndicator">
+                            <div class="speed-thumb"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="rows grow gap space-between">
-                <div class="cols gap">
-                    <div id="btnConfiguration" class="btn">
+                <div class="cols gap space-between">
+                    <div class="cols gap">
+                        <div class="btn">
+                        </div>
+                        <div class="btn">
+                        </div>
                     </div>
-                    <div class="btn">
+                    <div id="btnConfiguration" class="btn btn-config">
+                        <i class="fas fa-cog fa-2x"></i>
                     </div>
                 </div>
                 <div class="colsi">
@@ -28,7 +42,8 @@
         <div id="configurationView" class="view1 panel">
             <div class="card wh100">
                 <header class="card-header">
-                    Configuração
+                    <span>Configuração</span>
+                    <button class="card-close-btn" data-close-view="true">✕</button>
                 </header>
                 <div class="card-body">
                     <div class="tab-left">

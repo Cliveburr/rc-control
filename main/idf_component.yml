@@ -1,9 +1,9 @@
 ## IDF Component Manager Manifest File
 dependencies:
   espressif/esp32-camera: "*"
+  idf: ">=4.1.0"
+  # cJSON is part of ESP-IDF, no need to add it separately
   ## Required IDF version
-  idf:
-    version: ">=4.1.0"
   # # Put list of dependencies here
   # # For components maintained by Espressif:
   # component: "~1.0.0"

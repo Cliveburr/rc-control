@@ -23,9 +23,9 @@ Views:
             Primeira coluna um botão de controle de velocidade do lado esquerdo
             Resto das colunas
                 Divisão por linhas
-                    Linha do topo sequencia de botões
-                        Primeiro botão abre tela de configuração
-                        Segundo botão de uso geral
+                    Linha do topo para botões
+                        Sequencia de botões de uso geral
+                        No canto esquero um botão abre tela de configuração
                     Linha alinha abaixo
                         Botão de controle de direção alinhado a direita
 

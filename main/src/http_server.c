@@ -2,6 +2,7 @@
 #include <esp_timer.h>
 #include <esp_log.h>
 #include <esp_http_server.h>
+#include <cJSON.h>
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -9,15 +10,79 @@ static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 #include "http_server.h"
-#include "cam.h"
+//#include "cam.h"
 #include "ota.h"
 #include "esp_camera.h"
 
 static const char *TAG = "http_server";
 static httpd_handle_t server = NULL;
-//static TimerHandle_t cam_timer = NULL;
-// static httpd_req_t *ws_req = NULL;
-// static int ws_fd;
+
+// WebSocket handler for receiving commands
+static esp_err_t ws_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET) {
+        ESP_LOGI(TAG, "WebSocket handshake done, new connection opened");
+        return ESP_OK;
+    }
+    
+    httpd_ws_frame_t ws_pkt;
+    uint8_t *buf = NULL;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_ws_recv_frame failed to get frame len with %d", ret);
+        return ret;
+    }
+    
+    if (ws_pkt.len) {
+        buf = calloc(1, ws_pkt.len + 1);
+        if (buf == NULL) {
+            ESP_LOGE(TAG, "Failed to calloc memory for buf");
+            return ESP_ERR_NO_MEM;
+        }
+        
+        ws_pkt.payload = buf;
+        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "httpd_ws_recv_frame failed with %d", ret);
+            free(buf);
+            return ret;
+        }
+        
+        // Parse JSON command
+        cJSON *json = cJSON_Parse((char*)ws_pkt.payload);
+        if (json != NULL) {
+            cJSON *type = cJSON_GetObjectItem(json, "type");
+            cJSON *value = cJSON_GetObjectItem(json, "value");
+            
+            if (cJSON_IsString(type) && cJSON_IsNumber(value)) {
+                const char *command_type = type->valuestring;
+                
+                if (strcmp(command_type, "speed") == 0) {
+                    int speed_value = (int)value->valuedouble;
+                    ESP_LOGI(TAG, "Received speed command: %d", speed_value);
+                    process_speed_command(speed_value);
+                }
+            }
+            
+            cJSON_Delete(json);
+        } else {
+            ESP_LOGW(TAG, "Failed to parse JSON: %s", (char*)ws_pkt.payload);
+        }
+        
+        free(buf);
+    }
+    
+    return ESP_OK;
+}
+
+void process_speed_command(int speed_value)
+{
+    ESP_LOGI(TAG, "Processing speed command: %d", speed_value);
+    // TODO: Implement actual speed control logic here
+    // For now, just log the received value
+}
 
 static esp_err_t httpd_get_handler(httpd_req_t *req)
 {
@@ -30,104 +95,6 @@ static esp_err_t httpd_get_handler(httpd_req_t *req)
 
     return ESP_OK;
 }
-
-// static void process_picture_handler(camera_fb_t* pic)
-// {
-//     //ESP_LOGI(TAG, "process_picture_handler start");
-
-//     httpd_ws_frame_t ws_pkt;
-//     memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-//     ws_pkt.payload = (uint8_t*)pic->buf;
-//     ws_pkt.len = pic->len;
-//     ws_pkt.type = HTTPD_WS_TYPE_BINARY;
-
-//     ESP_ERROR_CHECK(httpd_ws_send_frame_async(server, ws_fd, &ws_pkt));
-// }
-
-// static void cam_timer_callback(TimerHandle_t xTimer)
-// {
-//     //ESP_LOGI(TAG, "cam_timer_callback");
-
-//     cam_process_picture(&process_picture_handler);
-// }
-
-// static void cam_timer_callback(void *pvParameter)
-// {
-//     while (server != NULL)
-//     {
-//         //ESP_LOGI(TAG, "cam_timer_callback");
-        
-//         cam_process_picture(&process_picture_handler);
-
-//         vTaskDelay(pdMS_TO_TICKS(300));
-//     }
-//     vTaskDelete(NULL);
-// }
-
-// static esp_err_t ws_handler(httpd_req_t *req)
-// {
-//     if (req->method == HTTP_GET)
-//     {
-//         ESP_LOGI(TAG, "Handshake done, the new connection was opened");
-
-//         cam_start_camera();
-//         // cam_timer = xTimerCreate("Cam", pdMS_TO_TICKS(500), pdTRUE, NULL, cam_timer_callback);
-//         // xTimerStart(cam_timer, 1000);
-//         xTaskCreate(cam_timer_callback, "cam_timer", 2048, NULL, 5, NULL);
-
-//         ws_req = req;
-//         ws_fd = httpd_req_to_sockfd(req);
-//         httpd_ws_frame_t ws_pkt;
-//         uint8_t *buf = NULL;
-//         memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-//         ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-
-//         while (1)
-//         {
-//             esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
-//             if (ret != ESP_OK)
-//             {
-//                 break;
-//             }
-
-//             if (ws_pkt.len)
-//             {
-//                 buf = calloc(1, ws_pkt.len + 1);
-//                 if (buf == NULL)
-//                 {
-//                     ESP_LOGE(TAG, "Failed to calloc memory for buf");
-//                     break;
-//                 }
-
-//                 ws_pkt.payload = buf;
-//                 ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
-//                 if (ret == ESP_OK)
-//                 {
-//                     ESP_LOGI(TAG, "WS: %s", ws_pkt.payload);
-//                 }
-//                 else if (ret == ESP_ERR_INVALID_STATE)
-//                 {
-//                     break;
-//                 }
-//                 free(buf);
-//                 vTaskDelay(pdMS_TO_TICKS(166));
-//             }
-//         }
-
-//         if (buf)
-//         {
-//             free(buf);
-//         }
-
-//         ESP_LOGI(TAG, "ws_handler end");
-
-//         return ESP_OK;
-//     }
-
-//     ESP_LOGI(TAG, "WebSocket disconnected");
-
-//     return ESP_OK;
-// }
 
 esp_err_t jpg_stream_httpd_handler(httpd_req_t *req)
 {
@@ -227,14 +194,15 @@ void http_server_start(void)
 
     ESP_ERROR_CHECK(httpd_start(&server, &config));
 
-    // httpd_uri_t ws = {
-    //         .uri        = "/ws",
-    //         .method     = HTTP_GET,
-    //         .handler    = ws_handler,
-    //         .user_ctx   = NULL,
-    //         .is_websocket = true
-    // };
-    // httpd_register_uri_handler(server, &ws);
+    // Register WebSocket handler for commands
+    httpd_uri_t ws = {
+        .uri        = "/ws",
+        .method     = HTTP_GET,
+        .handler    = ws_handler,
+        .user_ctx   = NULL,
+        .is_websocket = true
+    };
+    httpd_register_uri_handler(server, &ws);
 
     httpd_uri_t httpd_video = {
         .uri       = "/video",

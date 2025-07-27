@@ -8,4 +8,7 @@ void http_server_start(void);
 void http_server_stop(void);
 bool http_server_is_running(void);
 
+// WebSocket command handling
+void process_speed_command(int speed_value);
+
 #endif

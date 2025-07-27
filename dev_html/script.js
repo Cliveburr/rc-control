@@ -1,4 +1,6 @@
 
+const DEBUG = true;
+
 function makeView() {
     const img = document.getElementsByTagName('img')[0];
     img.src = '/video?' + new Date().getTime();
@@ -41,12 +43,189 @@ function makeView() {
 //     ws.send(data);
 // }
 
+// WebSocket connection for sending commands
+let ws = null;
+
+function initWebSocket() {
+    if (DEBUG) {
+        console.log('DEBUG mode: WebSocket disabled for testing');
+        return;
+    }
+    
+    try {
+        ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = () => {
+            console.log('WebSocket connected for control commands');
+        };
+        
+        ws.onclose = () => {
+            console.log('WebSocket closed');
+            // Tentar reconectar após 3 segundos
+            setTimeout(initWebSocket, 3000);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    } catch (error) {
+        console.error('Failed to initialize WebSocket:', error);
+    }
+}
+
+function sendSpeedCommand(value) {
+    if (DEBUG) {
+        console.log('DEBUG mode: Speed command (visual test only):', value);
+        return;
+    }
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const command = {
+            type: 'speed',
+            value: value
+        };
+        ws.send(JSON.stringify(command));
+        console.log('Speed command sent:', value);
+    } else {
+        console.warn('WebSocket not connected, cannot send speed command:', value);
+    }
+}
+
+function initSpeedControl() {
+    // Aguardar o DOM estar pronto
+    const speedIndicator = document.getElementById('speedIndicator');
+    
+    if (!speedIndicator) {
+        console.error('Speed control elements not found. Retrying in 100ms...');
+        setTimeout(initSpeedControl, 100);
+        return;
+    }
+    
+    const speedTrack = speedIndicator.parentElement;
+    
+    let isDragging = false;
+    let startY = 0;
+    let initialTop = 0;
+    const zeroPosition = 66.67; // 1/3 de baixo para cima em percentual
+    
+    // Função para calcular o valor da velocidade baseado na posição
+    function calculateSpeed(topPercent) {
+        // Mapear posição para velocidade (-100 a +100)
+        // Zero position é 66.67%
+        // Top (0%) = +100, Bottom (100%) = -100
+        const relativePosition = (zeroPosition - topPercent) / zeroPosition;
+        
+        if (topPercent < zeroPosition) {
+            // Acima do zero = velocidade positiva
+            return Math.round(relativePosition * 100);
+        } else {
+            // Abaixo do zero = velocidade negativa
+            const belowZeroRange = 100 - zeroPosition;
+            const belowZeroPosition = (topPercent - zeroPosition) / belowZeroRange;
+            return Math.round(-belowZeroPosition * 100);
+        }
+    }
+    
+    // Função para atualizar a posição e valor
+    function updateSpeed(topPercent) {
+        // Limitar entre 0% e 100%
+        topPercent = Math.max(0, Math.min(100, topPercent));
+        
+        speedIndicator.style.top = topPercent + '%';
+        const speed = calculateSpeed(topPercent);
+        
+        // Enviar comando via WebSocket
+        sendSpeedCommand(speed);
+    }
+    
+    // Função para retornar ao zero
+    function returnToZero() {
+        speedIndicator.style.transition = 'top 0.3s ease-out';
+        updateSpeed(zeroPosition);
+        
+        setTimeout(() => {
+            speedIndicator.style.transition = 'top 0.1s ease-out';
+        }, 300);
+    }
+    
+    // Event listeners para mouse
+    speedIndicator.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startY = e.clientY;
+        initialTop = parseFloat(speedIndicator.style.top) || zeroPosition;
+        speedIndicator.style.transition = 'none';
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        const deltaY = e.clientY - startY;
+        const trackHeight = speedTrack.clientHeight;
+        const deltaPercent = (deltaY / trackHeight) * 100;
+        const newTop = initialTop + deltaPercent;
+        
+        updateSpeed(newTop);
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            returnToZero();
+        }
+    });
+    
+    // Event listeners para touch (dispositivos móveis)
+    speedIndicator.addEventListener('touchstart', (e) => {
+        isDragging = true;
+        startY = e.touches[0].clientY;
+        initialTop = parseFloat(speedIndicator.style.top) || zeroPosition;
+        speedIndicator.style.transition = 'none';
+        e.preventDefault();
+    });
+    
+    document.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        
+        const deltaY = e.touches[0].clientY - startY;
+        const trackHeight = speedTrack.clientHeight;
+        const deltaPercent = (deltaY / trackHeight) * 100;
+        const newTop = initialTop + deltaPercent;
+        
+        updateSpeed(newTop);
+        e.preventDefault();
+    });
+    
+    document.addEventListener('touchend', () => {
+        if (isDragging) {
+            isDragging = false;
+            returnToZero();
+        }
+    });
+    
+    // Inicializar na posição zero
+    updateSpeed(zeroPosition);
+}
+
 class ViewInst {
 
     constructor(template, parentCtx) {
         this.parentCtx = parentCtx;
         this.html = template.cloneNode(true);
         this.ctx = {};
+        
+        // Adiciona funcionalidade genérica para botões de fechar
+        this.setupCloseButtons();
+    }
+
+    setupCloseButtons() {
+        const closeButtons = this.html.querySelectorAll('[data-close-view="true"]');
+        closeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                this.close();
+            });
+        });
     }
 
     setOnclick(id, callback) {
@@ -83,6 +262,11 @@ class View {
 
 
 function mainCtr(view) {
+
+    // Inicializar controle de velocidade após o DOM estar pronto
+    setTimeout(() => {
+        initSpeedControl();
+    }, 0);
 
     view.setOnclick('btnConfiguration', () => {
 
@@ -244,6 +428,13 @@ async function uploadOTAFirmware() {
 const views = {};
 
 function main() {
+
+    // Inicializar WebSocket para comandos (apenas se não estiver em modo DEBUG)
+    if (!DEBUG) {
+        initWebSocket();
+    } else {
+        console.log('DEBUG mode enabled: Running in visual test mode without WebSocket');
+    }
 
     views.mainView = new View('mainView', mainCtr);
     views.configurationView = new View('configurationView', netCtr);
