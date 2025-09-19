@@ -1,0 +1,93 @@
+
+https://www.youtube.com/watch?v=_vZMzgCb6YM
+https://www.youtube.com/watch?v=bq_XX86umf0
+
+Perfeito. Abaixo vai uma arquitetura simples para 1S LiPo com ESP32, micro-servo e motor 8520, e a shopping list em inglês para procurar no AliExpress.
+
+# Primeira compra
+  10 motor “8520 coreless brushed motor 8.5x20mm 1.0mm
+  10 DRV8833 Motor Drive Module 1.5A Dual H Bridge DC Gear Motor Driver Controller Board Kit
+  Silicone wire 24AWG and 28AWG (red/black)
+  5 GH-S37D Servo Motor Digital 3.7g Mini Micro Servo
+
+# Segunda compra
+  2pcs-15pcs Brass pipe 0.25mm wall thickness 1-12.5mm OD brass tube Straight tubing copper tube thin-walled Small diameter
+  LOOLIFL 1-5pcs 502 Super Glue Instant Quick-drying Cyanoacrylate Adhesive Leather Rubber Wood Metal Strong Bond Liquid Glue Tool
+  Adjustable Mini Hand Saw U Type Steel Saw Bow 12 Saw Blade for Jewelry Woodwork Craft Cutting Tools Hand Tool Set for Jeweler
+  1 Box M2 M2.5 M3 M4 Solid Brass Copper PCB Board Hex Hexagon Standoff Pillar Spacer Column Screw Nut Washer Assortment Kit Set
+  1 box M2 M2.5 M3 M4 Plastic Nylon Hex Hexagon Spacer Column Standoff Screw Nut Washer Kit Set for PCB Motherboard White Black
+  34kinds Gears Pulley Motor Gear Set Plastic Gears Plastic Gears Pulley Belt Worm Kits Crown Gear Set Robot Motor Parts Parts
+  75kinds Gears Pulley Motor Gear Set Plastic Gears Plastic Gears Pulley Belt Worm Kits Crown Gear Set Robot Motor Parts Parts
+  85kinds Gears Pulley Motor Gear Set Plastic Gears Plastic Gears Pulley Belt Worm Kits Crown Gear Set Robot Motor Parts Parts
+  200PCS Mixed Plastic Gear Bag Motor Motor Transmission Gear 0.5 Mold DIY Handmade Toy Accessories Motor engranajes de plástico
+
+
+Resumo da arquitetura elétrica
+- Bateria: 1S LiPo (3.7 V nominal).
+- Motor: 8520 brushed coreless, controlado por um micro ESC brushed 1S (sinal tipo servo).
+- ESP32: alimentado a 3.3 V por um DC-DC buck‑boost 3.3 V (1 A). GND comum com ESC e servo.
+- Servo de direção:
+  - Opção recomendada: micro-servo “1S compatible” (3.7 V), alimentado direto da bateria.
+  - Alternativa: micro-servo 5 V + booster 5 V (caso não encontre servo 1S).
+
+Shopping list (AliExpress search keywords)
+- ESP32 and power
+  - “ESP32 C3 SuperMini development board 3V3 pin” or “ESP32 DevKit ESP32-WROOM-32 3.3V pin small”
+  - “3.3V buck boost DC-DC 1A module TPS63000 TPS63020 fixed 3.3V”
+  - “1000uF low ESR electrolytic capacitor 6.3V or 10V” (to prevent WiFi brownouts on 3.3V rail)
+  - “Micro slide switch 2P2T or SPST small on off”
+  - “TP4056 1S LiPo charging module with protection (DW01 + FS8205) USB-C or micro USB”
+  - “1S LiPo battery 300–450mAh 25C–60C JST-PH 2.0 connector” (buy 2–3 packs)
+  - “1S LiPo low voltage buzzer alarm 2-in-1 3.7V”
+
+- Drive motor and control
+  ok - “8520 coreless brushed motor 8.5x20mm 1.0mm shaft”
+  ok ponte DRV8833 - “1S micro brushed ESC 5A–10A bidirectional with brake (RC car/boat) servo signal”
+  ok - “Silicone wire 24AWG and 28AWG (red/black)”
+
+- Steering servo (choose one path)
+  - Recommended (simpler wiring):
+  ok  - “1S 3.7V 1.7g–2.5g micro servo (for micro RC plane) 3.7V compatible”
+  - Alternative (if only 5V servos available):
+    - “2.5g–3.7g micro servo 4.8–6V”
+    - “MT3608 step up boost converter 5V 2A adjustable module” (set to 5.0 V)
+
+- Gears, axle and rolling parts (for ~5:1 ratio)
+  - “0.5M pinion gear 8T 1.0mm bore brass”
+  - “0.5M spur gear 40T 2.0mm bore plastic or metal”
+  - “2mm stainless steel shaft rod 100mm”
+  - “MR52ZZ bearings 2x5x2.5mm (x4)”
+  - “2mm wheel hub with M2 grub screw (set screw)”
+  - “20mm rubber tires micro wheels 2pcs or 4pcs”
+  - “Assorted M1.4 and M2 screws and nuts”
+  - “Heat shrink tubing assorted sizes”
+
+- Steering linkage and mounts
+  - “Micro ball links M2 and M2 pushrods 0.8–1.0mm wire” or “servo linkage Z-bend wire 0.8mm”
+  - “8520 motor mount bracket” (or plan to 3D-print a mount)
+  - “Servo horns micro 1.5–2g servo” (if not included)
+  - “Double-sided foam tape and CA glue (cyanoacrylate)”
+
+Optional (quality of life)
+- “JST-PH 2.0 male female connectors with wires” (battery/power harness)
+- “XT30 pigtail” (if you prefer more robust connector than JST-PH)
+- “Ferrite ring small” (to reduce noise on servo/ESC leads)
+
+Wiring cheat-sheet (resumo)
+- Battery (JST-PH) splits to:
+  - ESC power input (B+/B−).
+  - 3.3V buck-boost input → output to ESP32 3V3 pin.
+  - If using 5V servo: battery → 5V booster → servo Vcc.
+  - If using 3.7V servo: servo Vcc direto da bateria.
+- Grounds: ESC GND, ESP32 GND, servo GND todos em comum.
+- Signals (ESP32):
+  - One GPIO (PWM/LEDC at 50 Hz) → ESC signal.
+  - One GPIO (PWM/LEDC at 50 Hz) → Servo signal.
+- Add 470–1000uF capacitor across ESP32 3.3V and GND near the board.
+
+Notas rápidas
+- Mantenha os fios de motor/ESC trançados e separados do 3.3V para reduzir ruído.
+- Limite a tensão mínima da LiPo no seu código (ex.: pare <3.5 V/célula) e/ou use o buzzer.
+- Se o diecast ficar pesado, pode trocar a relação para 6:1: “0.5M pinion 8T + spur 48T”.
+
+Se quiser, descreva o espaço interno disponível (comprimento x largura) e o peso esperado; eu ajusto a lista (servo 1S específico, ESC exato, pinhão/coroa e hubs compatíveis) e dou os pinos do ESP32 sugeridos para PWM.

@@ -1,6 +1,10 @@
 #ifndef __CAM_H__
 #define __CAM_H__
 
+#include "project_config.h"
+
+#if ENABLE_CAMERA_SUPPORT
+
 #include <inttypes.h>
 #include "esp_camera.h"
 
@@ -25,4 +29,6 @@
 void cam_start_camera(void);
 void cam_process_picture(void (*process)(camera_fb_t*));
 
-#endif
+#endif // ENABLE_CAMERA_SUPPORT
+
+#endif // __CAM_H__

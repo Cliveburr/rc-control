@@ -1,5 +1,8 @@
-#include "esp_log.h"
+#include "project_config.h"
 
+#if ENABLE_CAMERA_SUPPORT
+
+#include "esp_log.h"
 #include "cam.h"
 
 // https://github.com/espressif/esp32-camera
@@ -70,3 +73,5 @@ void cam_process_picture(void (*process)(camera_fb_t*))
 
     esp_camera_fb_return(pic);
 }
+
+#endif // ENABLE_CAMERA_SUPPORT

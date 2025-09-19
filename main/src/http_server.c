@@ -10,16 +10,27 @@
 #include <soc/rtc.h>
 #include <esp_partition.h>
 
-#define PART_BOUNDARY "123456789000000000000987654321"
-static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
-static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
-static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
-
+#include "project_config.h"
 #include "http_server.h"
-//#include "cam.h"
 #include "ota.h"
-#include "esp_camera.h"
+
+#if ENABLE_LED_CONTROL
 #include "led_control.h"
+#endif
+
+#if ENABLE_SERVO_CONTROL
+#include "servo_control.h"
+#endif
+
+#if ENABLE_CAMERA_SUPPORT
+    #include "cam.h"
+    #include "esp_camera.h"
+    
+    #define PART_BOUNDARY "123456789000000000000987654321"
+    static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+    static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
+    static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+#endif
 
 static const char *TAG = "http_server";
 static httpd_handle_t server = NULL;
@@ -99,32 +110,51 @@ static esp_err_t ws_handler(httpd_req_t *req)
 void process_speed_command(int speed_value)
 {
     ESP_LOGI(TAG, "Processing speed command: %d", speed_value);
-    // TODO: Implement actual speed control logic here
-    // For now, just log the received value
+#if ENABLE_MOTOR_CONTROL
+    // TODO: Implement actual motor speed control logic here
+    // speed_value: -100 to +100 (-100 = full reverse, 0 = stop, +100 = full forward)
+#else
+    ESP_LOGW(TAG, "Motor control disabled in project_config.h");
+#endif
 }
 
 void process_wheels_command(int wheels_value)
 {
     ESP_LOGI(TAG, "Processing wheels command: %d", wheels_value);
-    // TODO: Implement actual wheels/steering control logic here
+#if ENABLE_SERVO_CONTROL
+    // Control servo position based on wheels command
     // wheels_value: -100 to +100 (-100 = full left, 0 = center, +100 = full right)
-    // For now, just log the received value
+    esp_err_t ret = servo_control_set_position(wheels_value);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set servo position: %s", esp_err_to_name(ret));
+    }
+#else
+    ESP_LOGW(TAG, "Servo control disabled in project_config.h");
+#endif
 }
 
 void process_horn_command(int horn_value)
 {
     ESP_LOGI(TAG, "Processing horn command: %d", horn_value);
+#if ENABLE_LED_CONTROL
     // Control horn LED based on command value
     // horn_value: 1 = horn ON, 0 = horn OFF
     led_horn_set(horn_value != 0);
+#else
+    ESP_LOGW(TAG, "LED control disabled in project_config.h");
+#endif
 }
 
 void process_light_command(int light_value)
 {
     ESP_LOGI(TAG, "Processing light command: %d", light_value);
+#if ENABLE_LED_CONTROL
     // Control light LED based on command value
     // light_value: 1 = light ON, 0 = light OFF
     led_light_set(light_value != 0);
+#else
+    ESP_LOGW(TAG, "LED control disabled in project_config.h");
+#endif
 }
 
 static esp_err_t system_info_handler(httpd_req_t *req)
@@ -271,6 +301,7 @@ static esp_err_t httpd_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+#if ENABLE_CAMERA_SUPPORT
 esp_err_t jpg_stream_httpd_handler(httpd_req_t *req)
 {
     camera_fb_t * fb = NULL;
@@ -352,6 +383,7 @@ esp_err_t jpg_stream_httpd_handler(httpd_req_t *req)
     last_frame = 0;
     return res;
 }
+#endif // ENABLE_CAMERA_SUPPORT
 
 /******************************* PUBLIC METHODS *************************************/
 
@@ -362,7 +394,9 @@ void http_server_start(void)
         return;
     }
 
-    //cam_start_camera();
+#if ENABLE_CAMERA_SUPPORT
+    cam_start_camera();
+#endif
     
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
@@ -379,6 +413,8 @@ void http_server_start(void)
     };
     httpd_register_uri_handler(server, &ws);
 
+#if ENABLE_CAMERA_SUPPORT
+    // Video streaming handler
     httpd_uri_t httpd_video = {
         .uri       = "/video",
         .method    = HTTP_GET,
@@ -386,6 +422,7 @@ void http_server_start(void)
         .user_ctx  = NULL
     };
     httpd_register_uri_handler(server, &httpd_video);
+#endif
 
     httpd_uri_t ota_upload = {
         .uri       = "/ota/upload",

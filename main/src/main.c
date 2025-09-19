@@ -1,10 +1,18 @@
 #include <esp_log.h>
 //#include "../../../../v5.2/esp-idf/components/soc/esp32c2/include/soc/rtc_cntl_reg.h"
 
+#include "project_config.h"
 #include "config.h"
 #include "net.h"
 #include "ota.h"
+
+#if ENABLE_LED_CONTROL
 #include "led_control.h"
+#endif
+
+#if ENABLE_SERVO_CONTROL
+#include "servo_control.h"
+#endif
 
 // #include <sys/unistd.h>
 // #include "esp_log.h"
@@ -25,9 +33,17 @@ void app_main(void)
 
     config_init();
 
+#if ENABLE_LED_CONTROL
     led_control_init();
+#endif
 
+#if ENABLE_SERVO_CONTROL
+    servo_control_init();
+#endif
+
+#if ENABLE_OTA_UPDATES
     ota_init();
+#endif
 
     net_init();
 
