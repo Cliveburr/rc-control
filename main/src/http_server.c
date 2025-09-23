@@ -22,6 +22,10 @@
 #include "servo_control.h"
 #endif
 
+#if ENABLE_BATTERY_MONITORING
+#include "battery_monitor.h"
+#endif
+
 #if ENABLE_CAMERA_SUPPORT
     #include "cam.h"
     #include "esp_camera.h"
@@ -35,11 +39,75 @@
 static const char *TAG = "http_server";
 static httpd_handle_t server = NULL;
 
+// WebSocket client management
+#define MAX_WS_CLIENTS 5
+static int ws_clients[MAX_WS_CLIENTS];
+static int ws_client_count = 0;
+
+// Function to add WebSocket client
+static void add_ws_client(int fd) {
+    if (ws_client_count < MAX_WS_CLIENTS) {
+        ws_clients[ws_client_count] = fd;
+        ws_client_count++;
+        ESP_LOGI(TAG, "WebSocket client added, total clients: %d", ws_client_count);
+    }
+}
+
+// Function to remove WebSocket client
+static void remove_ws_client(int fd) {
+    for (int i = 0; i < ws_client_count; i++) {
+        if (ws_clients[i] == fd) {
+            // Shift remaining clients
+            for (int j = i; j < ws_client_count - 1; j++) {
+                ws_clients[j] = ws_clients[j + 1];
+            }
+            ws_client_count--;
+            ESP_LOGI(TAG, "WebSocket client removed, total clients: %d", ws_client_count);
+            break;
+        }
+    }
+}
+
+// Function to broadcast message to all WebSocket clients
+esp_err_t http_server_broadcast_ws(const char *message) {
+    if (server == NULL || message == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    httpd_ws_frame_t ws_pkt;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    ws_pkt.payload = (uint8_t *)message;
+    ws_pkt.len = strlen(message);
+    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+
+    int sent_count = 0;
+    for (int i = 0; i < ws_client_count; i++) {
+        esp_err_t ret = httpd_ws_send_frame_async(server, ws_clients[i], &ws_pkt);
+        if (ret == ESP_OK) {
+            sent_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed to send to client %d: %s", ws_clients[i], esp_err_to_name(ret));
+        }
+    }
+    
+    ESP_LOGD(TAG, "Broadcast sent to %d/%d clients", sent_count, ws_client_count);
+    return ESP_OK;
+}
+
 // WebSocket handler for receiving commands
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
         ESP_LOGI(TAG, "WebSocket handshake done, new connection opened");
+        
+        // Add client to list
+        add_ws_client(httpd_req_to_sockfd(req));
+        
+#if ENABLE_BATTERY_MONITORING
+        // Send battery initialization message
+        battery_send_init_message(req);
+#endif
+        
         return ESP_OK;
     }
     
@@ -102,6 +170,12 @@ static esp_err_t ws_handler(httpd_req_t *req)
         }
         
         free(buf);
+    }
+    
+    // Check if the connection is being closed
+    if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
+        ESP_LOGI(TAG, "WebSocket connection closed by client");
+        remove_ws_client(httpd_req_to_sockfd(req));
     }
     
     return ESP_OK;
@@ -480,4 +554,9 @@ void http_server_stop(void)
 bool http_server_is_running(void)
 {
     return server != NULL;
+}
+
+void* http_server_get_handle(void)
+{
+    return server;
 }

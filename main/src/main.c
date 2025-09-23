@@ -14,6 +14,10 @@
 #include "servo_control.h"
 #endif
 
+#if ENABLE_BATTERY_MONITORING
+#include "battery_monitor.h"
+#endif
+
 // #include <sys/unistd.h>
 // #include "esp_log.h"
 // #include "esp_system.h"
@@ -41,11 +45,19 @@ void app_main(void)
     servo_control_init();
 #endif
 
+#if ENABLE_BATTERY_MONITORING
+    battery_monitor_init();
+#endif
+
 #if ENABLE_OTA_UPDATES
     ota_init();
 #endif
 
     net_init();
+
+#if ENABLE_BATTERY_MONITORING
+    battery_monitor_start_task();
+#endif
 
     // config_data_t config_data = config_load();
 

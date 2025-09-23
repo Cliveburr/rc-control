@@ -47,6 +47,15 @@
 #define ENABLE_LED_CONTROL          1   // 0 = Disabled, 1 = Enabled
 
 /**
+ * @brief Enable battery monitoring
+ * 
+ * Set to 1 to enable battery voltage monitoring via ADC.
+ * Set to 0 to disable battery monitoring.
+ * Configure details in battery_monitor.h
+ */
+#define ENABLE_BATTERY_MONITORING   1   // 0 = Disabled, 1 = Enabled
+
+/**
  * @brief Enable motor speed control
  * 
  * Set to 1 to enable motor speed control functionality.

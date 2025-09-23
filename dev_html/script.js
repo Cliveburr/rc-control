@@ -45,6 +45,7 @@ function makeView() {
 
 // WebSocket connection for sending commands
 let ws = null;
+let batteryType = '1S'; // Default battery type, will be updated from ESP32
 
 function initWebSocket() {
     if (DEBUG) {
@@ -59,6 +60,10 @@ function initWebSocket() {
             console.log('WebSocket connected for control commands');
         };
         
+        ws.onmessage = (event) => {
+            handleWebSocketMessage(event.data);
+        };
+        
         ws.onclose = () => {
             console.log('WebSocket closed');
             // Tentar reconectar após 3 segundos
@@ -71,6 +76,63 @@ function initWebSocket() {
     } catch (error) {
         console.error('Failed to initialize WebSocket:', error);
     }
+}
+
+function handleWebSocketMessage(data) {
+    try {
+        const message = JSON.parse(data);
+        console.log('Received WebSocket message:', message);
+        
+        switch (message.type) {
+            case 'init':
+                handleInitMessage(message);
+                break;
+            case 'battery':
+                handleBatteryMessage(message);
+                break;
+            default:
+                console.log('Unknown message type:', message.type);
+        }
+    } catch (error) {
+        console.error('Failed to parse WebSocket message:', error, data);
+    }
+}
+
+function handleInitMessage(message) {
+    if (message.battery_type) {
+        batteryType = message.battery_type;
+        console.log('Battery type configured:', batteryType);
+    }
+}
+
+function handleBatteryMessage(message) {
+    if (typeof message.voltage === 'number') {
+        const voltage = message.voltage;
+        const batteryLevel = calculateBatteryLevel(voltage, batteryType);
+        updateBatteryLevel(batteryLevel);
+        console.log(`Battery: ${voltage.toFixed(2)}V (${batteryLevel}/10 levels, ${batteryType})`);
+    }
+}
+
+function calculateBatteryLevel(voltage, type) {
+    let minVoltage, maxVoltage;
+    
+    if (type === '1S') {
+        minVoltage = 3.0;  // 1S LiPo empty (3.0V)
+        maxVoltage = 4.2;  // 1S LiPo full (4.2V)
+    } else if (type === '2S') {
+        minVoltage = 6.0;  // 2S LiPo empty (6.0V)
+        maxVoltage = 8.4;  // 2S LiPo full (8.4V)
+    } else {
+        console.error('Unknown battery type:', type);
+        return 0;
+    }
+    
+    // Calculate percentage and convert to level (0-10)
+    const percentage = Math.max(0, Math.min(100, (voltage - minVoltage) / (maxVoltage - minVoltage) * 100));
+    const level = Math.floor(percentage / 10);
+    
+    return Math.max(0, Math.min(10, level));
 }
 
 function sendSpeedCommand(value) {
@@ -771,6 +833,42 @@ function showSystemInfoError() {
     });
 }
 
+// Battery level debug simulation
+let batteryLevel = 0;
+let batteryDirection = 1; // 1 for increasing, -1 for decreasing
+
+function updateBatteryLevel(level) {
+    const batteryLevels = document.querySelectorAll('.battery-level');
+    
+    // Remove active class from all levels
+    batteryLevels.forEach(levelElement => {
+        levelElement.classList.remove('active');
+    });
+    
+    // Add active class to levels up to the current level
+    for (let i = 0; i < Math.min(level, 10); i++) {
+        batteryLevels[i].classList.add('active');
+    }
+}
+
+function startBatteryDebugLoop() {
+    if (DEBUG) {
+        setInterval(() => {
+            batteryLevel += batteryDirection;
+            
+            // Change direction when reaching limits
+            if (batteryLevel >= 10) {
+                batteryDirection = -1;
+            } else if (batteryLevel <= 0) {
+                batteryDirection = 1;
+            }
+            
+            updateBatteryLevel(batteryLevel);
+            console.log('Battery level debug:', batteryLevel);
+        }, 1000); // Update every 1 second
+    }
+}
+
 const views = {};
 
 function main() {
@@ -780,6 +878,8 @@ function main() {
         initWebSocket();
     } else {
         console.log('DEBUG mode enabled: Running in visual test mode without WebSocket');
+        // Start battery debug loop
+        startBatteryDebugLoop();
     }
 
     views.mainView = new View('mainView', mainCtr);

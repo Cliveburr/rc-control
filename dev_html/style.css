@@ -594,3 +594,68 @@ button {
 .system-info .button-group {
     justify-content: center;
 }
+
+/* Battery indicator styles */
+.battery-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 70px;
+    height: 70px;
+    position: relative;
+}
+
+.battery-body {
+    width: 60px;
+    height: 40px;
+    background: #333;
+    border: 2px solid #666;
+    border-radius: 3px;
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 4px;
+    box-sizing: border-box;
+}
+
+.battery-tip {
+    width: 8px;
+    height: 24px;
+    background: #666;
+    border-radius: 0 2px 2px 0;
+    position: absolute;
+    right: -3px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.battery-level {
+    width: 4px;
+    height: 32px;
+    background: #111;
+    border-radius: 1px;
+    margin: 0 1px;
+    transition: background-color 0.3s ease;
+}
+
+/* Battery levels - showing different colors based on charge */
+.battery-level.active.level-1,
+.battery-level.active.level-2,
+.battery-level.active.level-3 {
+    background: #dc3545; /* Red for low battery */
+}
+
+.battery-level.active.level-4,
+.battery-level.active.level-5,
+.battery-level.active.level-6,
+.battery-level.active.level-7 {
+    background: #ffc107; /* Yellow for medium battery */
+}
+
+.battery-level.active.level-8,
+.battery-level.active.level-9,
+.battery-level.active.level-10 {
+    background: #28a745; /* Green for high battery */
+}
