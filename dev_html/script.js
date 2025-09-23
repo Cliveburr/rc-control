@@ -210,37 +210,29 @@ function initGenericControl(controlType, sendCommandFunc) {
     
     const controlTrack = controlIndicator.parentElement;
     const isVertical = controlType === 'speed';
+    const zeroPosition = isVertical ? 66.67 : 50;
     
-    let isDragging = false;
-    let startPos = 0;
-    let initialPosition = 0;
-    const zeroPosition = isVertical ? 66.67 : 50; // 1/3 de baixo para cima para speed, centro para wheels
+    // Cache de touch points específico para este controle
+    let touchCache = [];
     
     // Função para calcular o valor baseado na posição
     function calculateValue(positionPercent) {
         if (isVertical) {
-            // Speed control (vertical) - mapear posição para velocidade (-100 a +100)
             const relativePosition = (zeroPosition - positionPercent) / zeroPosition;
-            
             if (positionPercent < zeroPosition) {
-                // Acima do zero = velocidade positiva
                 return Math.round(relativePosition * 100);
             } else {
-                // Abaixo do zero = velocidade negativa
                 const belowZeroRange = 100 - zeroPosition;
                 const belowZeroPosition = (positionPercent - zeroPosition) / belowZeroRange;
                 return Math.round(-belowZeroPosition * 100);
             }
         } else {
-            // Wheels control (horizontal) - mapear posição para direção (-100 a +100)
-            // 0% = -100 (esquerda), 50% = 0 (centro), 100% = +100 (direita)
             return Math.round((positionPercent - 50) * 2);
         }
     }
     
     // Função para atualizar a posição e valor
     function updateControl(positionPercent) {
-        // Limitar entre 0% e 100%
         positionPercent = Math.max(0, Math.min(100, positionPercent));
         
         if (isVertical) {
@@ -250,18 +242,21 @@ function initGenericControl(controlType, sendCommandFunc) {
         }
         
         const value = calculateValue(positionPercent);
-        
-        // Enviar comando via WebSocket
         sendCommandFunc(value);
+        
+        if (DEBUG) console.log(`${controlType}: Posição ${positionPercent.toFixed(1)}%, Valor: ${value}`);
     }
     
-    // Função para retornar ao zero
-    function returnToZero() {
+    // Função para forçar reset ao zero (útil para reset manual)
+    function forceResetToZero() {
+        if (DEBUG) console.log(`${controlType}: Reset forçado ao zero`);
+        
         if (isVertical) {
             controlIndicator.style.transition = 'top 0.3s ease-out';
         } else {
             controlIndicator.style.transition = 'left 0.3s ease-out';
         }
+        
         updateControl(zeroPosition);
         
         setTimeout(() => {
@@ -273,126 +268,276 @@ function initGenericControl(controlType, sendCommandFunc) {
         }, 300);
     }
     
-    // Event listeners para mouse
-    controlIndicator.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        startPos = isVertical ? e.clientY : e.clientX;
-        initialPosition = parseFloat(isVertical ? controlIndicator.style.top : controlIndicator.style.left) || zeroPosition;
-        controlIndicator.style.transition = 'none';
-        e.preventDefault();
-    });
-
-    // Event listener para clique direto no track
-    controlTrack.addEventListener('mousedown', (e) => {
-        // Se o clique foi no indicador, deixar o handler dele cuidar
-        if (e.target === controlIndicator || controlIndicator.contains(e.target)) {
-            return;
+    // Função para retornar ao zero (modificada para speed control)
+    function returnToZero() {
+        if (DEBUG) console.log(`${controlType}: Verificando zona de reset`);
+        
+        // Para o controle speed, só resetar se estiver próximo ao zero
+        if (isVertical) { // Speed control
+            const currentPosition = parseFloat(controlIndicator.style.top) || zeroPosition;
+            const distanceFromZero = Math.abs(currentPosition - zeroPosition);
+            const resetThreshold = 10; // 10% de zona de reset
+            
+            if (distanceFromZero <= resetThreshold) {
+                // Dentro da zona de reset - retornar ao zero
+                if (DEBUG) console.log(`${controlType}: Dentro da zona de reset (${distanceFromZero.toFixed(1)}%), retornando ao zero`);
+                
+                controlIndicator.style.transition = 'top 0.3s ease-out';
+                updateControl(zeroPosition);
+                
+                setTimeout(() => {
+                    controlIndicator.style.transition = 'top 0.1s ease-out';
+                }, 300);
+            } else {
+                // Fora da zona de reset - manter posição atual
+                if (DEBUG) console.log(`${controlType}: Fora da zona de reset (${distanceFromZero.toFixed(1)}%), mantendo posição atual`);
+                
+                // Só ajustar a transição para suavizar movimento futuro
+                controlIndicator.style.transition = 'top 0.1s ease-out';
+            }
+        } else { // Wheels control - comportamento original (sempre volta ao centro)
+            if (DEBUG) console.log(`${controlType}: Retornando ao centro (comportamento wheels)`);
+            
+            controlIndicator.style.transition = 'left 0.3s ease-out';
+            updateControl(zeroPosition);
+            
+            setTimeout(() => {
+                controlIndicator.style.transition = 'left 0.1s ease-out';
+            }, 300);
         }
+    }
+    
+    // Função para encontrar touch no cache por identifier
+    function findTouchInCache(identifier) {
+        for (let i = 0; i < touchCache.length; i++) {
+            if (touchCache[i].identifier === identifier) {
+                return { touch: touchCache[i], index: i };
+            }
+        }
+        return null;
+    }
+    
+    // Função para calcular posição do touch
+    function getTouchPosition(touch) {
+        const rect = controlTrack.getBoundingClientRect();
+        let touchPercent;
+        
+        if (isVertical) {
+            const touchY = touch.clientY - rect.top;
+            const trackHeight = rect.height;
+            touchPercent = (touchY / trackHeight) * 100;
+        } else {
+            const touchX = touch.clientX - rect.left;
+            const trackWidth = rect.width;
+            touchPercent = (touchX / trackWidth) * 100;
+        }
+        
+        return Math.max(0, Math.min(100, touchPercent));
+    }
+    
+    // Variáveis para detectar duplo toque para reset manual (apenas speed)
+    let lastTapTime = 0;
+    let tapCount = 0;
+    
+    // Touch Start Handler
+    function handleTouchStart(ev) {
+        ev.preventDefault();
+        
+        if (DEBUG) console.log(`${controlType}: touchstart - targetTouches: ${ev.targetTouches.length}`);
+        
+        // Detectar duplo toque para reset manual (apenas para speed)
+        if (isVertical && ev.targetTouches.length === 1) {
+            const now = Date.now();
+            const timeDiff = now - lastTapTime;
+            
+            if (timeDiff < 300) { // 300ms para considerar duplo toque
+                tapCount++;
+                if (tapCount === 2) {
+                    const touchPos = getTouchPosition(ev.targetTouches[0]);
+                    const distanceFromZero = Math.abs(touchPos - zeroPosition);
+                    
+                    if (distanceFromZero <= 15) { // Zona um pouco maior para duplo toque
+                        if (DEBUG) console.log(`${controlType}: Duplo toque detectado na zona zero, forçando reset`);
+                        forceResetToZero();
+                        tapCount = 0;
+                        return; // Não processar como toque normal
+                    }
+                }
+            } else {
+                tapCount = 1;
+            }
+            lastTapTime = now;
+        }
+        
+        // Usar targetTouches para toques específicos neste elemento
+        for (let i = 0; i < ev.targetTouches.length; i++) {
+            const touch = ev.targetTouches[i];
+            
+            // Verificar se já temos este touch no cache
+            if (!findTouchInCache(touch.identifier)) {
+                // Adicionar ao cache com informações de posição inicial
+                const touchPercent = getTouchPosition(touch);
+                const touchData = {
+                    identifier: touch.identifier,
+                    startX: touch.clientX,
+                    startY: touch.clientY,
+                    currentPercent: touchPercent,
+                    initialPercent: touchPercent
+                };
+                
+                touchCache.push(touchData);
+                
+                // Se é o primeiro toque, inicializar o controle
+                if (touchCache.length === 1) {
+                    controlIndicator.style.transition = 'none';
+                    updateControl(touchPercent);
+                    if (DEBUG) console.log(`${controlType}: Primeiro toque iniciado (ID: ${touch.identifier})`);
+                }
+            }
+        }
+    }
+    
+    // Touch Move Handler
+    function handleTouchMove(ev) {
+        ev.preventDefault();
+        
+        // Usar targetTouches para movimento específico neste elemento
+        for (let i = 0; i < ev.targetTouches.length; i++) {
+            const touch = ev.targetTouches[i];
+            const cacheEntry = findTouchInCache(touch.identifier);
+            
+            if (cacheEntry) {
+                // Calcular nova posição baseada no movimento
+                const deltaX = touch.clientX - cacheEntry.touch.startX;
+                const deltaY = touch.clientY - cacheEntry.touch.startY;
+                
+                const trackSize = isVertical ? controlTrack.clientHeight : controlTrack.clientWidth;
+                const deltaPercent = (isVertical ? deltaY : deltaX) / trackSize * 100;
+                const newPercent = cacheEntry.touch.initialPercent + deltaPercent;
+                
+                // Atualizar cache
+                cacheEntry.touch.currentPercent = newPercent;
+                
+                // Se é o primeiro (principal) toque, atualizar controle
+                if (cacheEntry.index === 0) {
+                    updateControl(newPercent);
+                }
+            }
+        }
+    }
+    
+    // Touch End Handler
+    function handleTouchEnd(ev) {
+        ev.preventDefault();
+        
+        if (DEBUG) console.log(`${controlType}: touchend - changedTouches: ${ev.changedTouches.length}`);
+        
+        // Usar changedTouches para detectar quais toques terminaram
+        for (let i = 0; i < ev.changedTouches.length; i++) {
+            const touch = ev.changedTouches[i];
+            const cacheEntry = findTouchInCache(touch.identifier);
+            
+            if (cacheEntry) {
+                if (DEBUG) console.log(`${controlType}: Removendo toque (ID: ${touch.identifier})`);
+                
+                // Remover do cache
+                touchCache.splice(cacheEntry.index, 1);
+                
+                // Se não há mais toques, retornar ao zero
+                if (touchCache.length === 0) {
+                    if (DEBUG) console.log(`${controlType}: Último toque removido, retornando ao zero`);
+                    returnToZero();
+                }
+            }
+        }
+    }
+    
+    // Touch Cancel Handler
+    function handleTouchCancel(ev) {
+        if (DEBUG) console.log(`${controlType}: touchcancel`);
+        handleTouchEnd(ev); // Tratar cancelamento como fim de toque
+    }
+    
+    // Mouse handlers para compatibilidade desktop
+    let mouseActive = false;
+    let mouseStartPos = { x: 0, y: 0 };
+    let mouseInitialPercent = 0;
+    
+    function handleMouseDown(ev) {
+        if (touchCache.length > 0) return; // Ignorar mouse se já há toques ativos
+        
+        ev.preventDefault();
+        mouseActive = true;
         
         const rect = controlTrack.getBoundingClientRect();
         let clickPercent;
         
         if (isVertical) {
-            const clickY = e.clientY - rect.top;
-            const trackHeight = rect.height;
-            clickPercent = (clickY / trackHeight) * 100;
+            const clickY = ev.clientY - rect.top;
+            clickPercent = (clickY / rect.height) * 100;
         } else {
-            const clickX = e.clientX - rect.left;
-            const trackWidth = rect.width;
-            clickPercent = (clickX / trackWidth) * 100;
+            const clickX = ev.clientX - rect.left;
+            clickPercent = (clickX / rect.width) * 100;
         }
         
-        isDragging = true;
-        startPos = isVertical ? e.clientY : e.clientX;
-        initialPosition = clickPercent;
-        controlIndicator.style.transition = 'none';
+        mouseStartPos = { x: ev.clientX, y: ev.clientY };
+        mouseInitialPercent = clickPercent;
         
-        // Mover imediatamente para a posição clicada
+        controlIndicator.style.transition = 'none';
         updateControl(clickPercent);
         
-        e.preventDefault();
-    });
+        if (DEBUG) console.log(`${controlType}: Mouse down (${clickPercent.toFixed(1)}%)`);
+    }
     
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
+    function handleMouseMove(ev) {
+        if (!mouseActive) return;
         
-        const deltaPos = (isVertical ? e.clientY : e.clientX) - startPos;
+        ev.preventDefault();
+        
+        const deltaX = ev.clientX - mouseStartPos.x;
+        const deltaY = ev.clientY - mouseStartPos.y;
+        
         const trackSize = isVertical ? controlTrack.clientHeight : controlTrack.clientWidth;
-        const deltaPercent = (deltaPos / trackSize) * 100;
-        const newPosition = initialPosition + deltaPercent;
+        const deltaPercent = (isVertical ? deltaY : deltaX) / trackSize * 100;
+        const newPercent = mouseInitialPercent + deltaPercent;
         
-        updateControl(newPosition);
-        e.preventDefault();
-    });
+        updateControl(newPercent);
+    }
     
-    document.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            returnToZero();
-        }
-    });
+    function handleMouseUp(ev) {
+        if (!mouseActive) return;
+        
+        mouseActive = false;
+        returnToZero();
+        
+        if (DEBUG) console.log(`${controlType}: Mouse up`);
+    }
     
-    // Event listeners para touch (dispositivos móveis)
-    controlIndicator.addEventListener('touchstart', (e) => {
-        isDragging = true;
-        startPos = isVertical ? e.touches[0].clientY : e.touches[0].clientX;
-        initialPosition = parseFloat(isVertical ? controlIndicator.style.top : controlIndicator.style.left) || zeroPosition;
-        controlIndicator.style.transition = 'none';
-        e.preventDefault();
-    });
-
-    // Event listener para touch direto no track
-    controlTrack.addEventListener('touchstart', (e) => {
-        // Se o toque foi no indicador, deixar o handler dele cuidar
-        if (e.target === controlIndicator || controlIndicator.contains(e.target)) {
-            return;
-        }
-        
-        const rect = controlTrack.getBoundingClientRect();
-        let touchPercent;
-        
-        if (isVertical) {
-            const touchY = e.touches[0].clientY - rect.top;
-            const trackHeight = rect.height;
-            touchPercent = (touchY / trackHeight) * 100;
-        } else {
-            const touchX = e.touches[0].clientX - rect.left;
-            const trackWidth = rect.width;
-            touchPercent = (touchX / trackWidth) * 100;
-        }
-        
-        isDragging = true;
-        startPos = isVertical ? e.touches[0].clientY : e.touches[0].clientX;
-        initialPosition = touchPercent;
-        controlIndicator.style.transition = 'none';
-        
-        // Mover imediatamente para a posição tocada
-        updateControl(touchPercent);
-        
-        e.preventDefault();
-    });
+    // Registrar event listeners nos elementos específicos (conforme MDN best practices)
+    controlIndicator.addEventListener('touchstart', handleTouchStart, { passive: false });
+    controlIndicator.addEventListener('touchmove', handleTouchMove, { passive: false });
+    controlIndicator.addEventListener('touchend', handleTouchEnd, { passive: false });
+    controlIndicator.addEventListener('touchcancel', handleTouchCancel, { passive: false });
     
-    document.addEventListener('touchmove', (e) => {
-        if (!isDragging) return;
-        
-        const deltaPos = (isVertical ? e.touches[0].clientY : e.touches[0].clientX) - startPos;
-        const trackSize = isVertical ? controlTrack.clientHeight : controlTrack.clientWidth;
-        const deltaPercent = (deltaPos / trackSize) * 100;
-        const newPosition = initialPosition + deltaPercent;
-        
-        updateControl(newPosition);
-        e.preventDefault();
-    });
+    controlTrack.addEventListener('touchstart', handleTouchStart, { passive: false });
+    controlTrack.addEventListener('touchmove', handleTouchMove, { passive: false });
+    controlTrack.addEventListener('touchend', handleTouchEnd, { passive: false });
+    controlTrack.addEventListener('touchcancel', handleTouchCancel, { passive: false });
     
-    document.addEventListener('touchend', () => {
-        if (isDragging) {
-            isDragging = false;
-            returnToZero();
-        }
-    });
+    // Mouse events para desktop
+    controlIndicator.addEventListener('mousedown', handleMouseDown);
+    controlTrack.addEventListener('mousedown', handleMouseDown);
+    controlIndicator.addEventListener('mousemove', handleMouseMove);
+    controlTrack.addEventListener('mousemove', handleMouseMove);
+    controlIndicator.addEventListener('mouseup', handleMouseUp);
+    controlTrack.addEventListener('mouseup', handleMouseUp);
+    controlIndicator.addEventListener('mouseleave', handleMouseUp);
+    controlTrack.addEventListener('mouseleave', handleMouseUp);
     
     // Inicializar na posição zero
     updateControl(zeroPosition);
+    
+    if (DEBUG) console.log(`${controlType}: Controle inicializado com cache local`);
 }
 
 function initSpeedControl() {
@@ -478,32 +623,63 @@ function mainCtr(view) {
     // Initialize horn button
     const hornBtn = view.html.querySelector('#btnHorn');
     if (hornBtn) {
-        hornBtn.addEventListener('mousedown', () => {
-            hornBtn.classList.add('active');
-            sendHornCommand(true);
-        });
+        let hornPressed = false;
         
-        hornBtn.addEventListener('mouseup', () => {
-            hornBtn.classList.remove('active');
-            sendHornCommand(false);
-        });
-        
-        hornBtn.addEventListener('mouseleave', () => {
-            hornBtn.classList.remove('active');
-            sendHornCommand(false);
-        });
-        
-        // Touch events for mobile
-        hornBtn.addEventListener('touchstart', (e) => {
+        hornBtn.addEventListener('mousedown', (e) => {
+            if (!hornPressed) {
+                hornPressed = true;
+                hornBtn.classList.add('active');
+                sendHornCommand(true);
+            }
             e.preventDefault();
-            hornBtn.classList.add('active');
-            sendHornCommand(true);
+        });
+        
+        hornBtn.addEventListener('mouseup', (e) => {
+            if (hornPressed) {
+                hornPressed = false;
+                hornBtn.classList.remove('active');
+                sendHornCommand(false);
+            }
+            e.preventDefault();
+        });
+        
+        hornBtn.addEventListener('mouseleave', (e) => {
+            if (hornPressed) {
+                hornPressed = false;
+                hornBtn.classList.remove('active');
+                sendHornCommand(false);
+            }
+        });
+        
+        // Touch events for mobile with better multi-touch support
+        hornBtn.addEventListener('touchstart', (e) => {
+            if (!hornPressed) {
+                hornPressed = true;
+                hornBtn.classList.add('active');
+                sendHornCommand(true);
+            }
+            e.preventDefault();
+            e.stopPropagation();
         });
         
         hornBtn.addEventListener('touchend', (e) => {
+            if (hornPressed) {
+                hornPressed = false;
+                hornBtn.classList.remove('active');
+                sendHornCommand(false);
+            }
             e.preventDefault();
-            hornBtn.classList.remove('active');
-            sendHornCommand(false);
+            e.stopPropagation();
+        });
+        
+        hornBtn.addEventListener('touchcancel', (e) => {
+            if (hornPressed) {
+                hornPressed = false;
+                hornBtn.classList.remove('active');
+                sendHornCommand(false);
+            }
+            e.preventDefault();
+            e.stopPropagation();
         });
     }
 
@@ -511,7 +687,24 @@ function mainCtr(view) {
     const lightBtn = view.html.querySelector('#btnLight');
     let lightState = false;
     if (lightBtn) {
-        lightBtn.addEventListener('click', () => {
+        lightBtn.addEventListener('click', (e) => {
+            lightState = !lightState;
+            
+            if (lightState) {
+                lightBtn.classList.add('active');
+            } else {
+                lightBtn.classList.remove('active');
+            }
+            sendLightCommand(lightState);
+            e.preventDefault();
+        });
+        
+        // Better touch support for light button
+        lightBtn.addEventListener('touchend', (e) => {
+            // Evitar duplo evento (click + touchend)
+            e.preventDefault();
+            e.stopPropagation();
+            
             lightState = !lightState;
             
             if (lightState) {
@@ -869,9 +1062,61 @@ function startBatteryDebugLoop() {
     }
 }
 
+function preventDefaultBehaviors() {
+    // Prevenir comportamentos padrão que podem interferir com os controles
+    document.addEventListener('gesturestart', (e) => {
+        e.preventDefault();
+    });
+    
+    document.addEventListener('gesturechange', (e) => {
+        e.preventDefault();
+    });
+    
+    document.addEventListener('gestureend', (e) => {
+        e.preventDefault();
+    });
+    
+    // Prevenir zoom com duplo toque, mas permitir toques nos controles
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', (e) => {
+        const now = (new Date()).getTime();
+        if (now - lastTouchEnd <= 300) {
+            // Verificar se o duplo toque não foi em um controle
+            const target = e.target;
+            const isControlElement = target.closest('.control') || 
+                                   target.closest('.btn') || 
+                                   target.id === 'btnHorn' || 
+                                   target.id === 'btnLight' ||
+                                   target.id === 'btnConfiguration';
+            
+            if (!isControlElement) {
+                e.preventDefault();
+            }
+        }
+        lastTouchEnd = now;
+    }, false);
+    
+    // Prevenir menu de contexto em toque longo nos controles
+    document.addEventListener('contextmenu', (e) => {
+        const target = e.target;
+        const isControlElement = target.closest('.control') || 
+                               target.closest('.btn') || 
+                               target.id === 'btnHorn' || 
+                               target.id === 'btnLight' ||
+                               target.id === 'btnConfiguration';
+        
+        if (isControlElement) {
+            e.preventDefault();
+        }
+    });
+}
+
 const views = {};
 
 function main() {
+
+    // Inicializar prevenção de comportamentos padrão
+    preventDefaultBehaviors();
 
     // Inicializar WebSocket para comandos (apenas se não estiver em modo DEBUG)
     if (!DEBUG) {
