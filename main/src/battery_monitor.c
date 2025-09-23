@@ -8,9 +8,9 @@
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
-#include <cJSON.h>
 #include <esp_http_server.h>
 #include "http_server.h"
+#include "rcp_protocol.h"
 
 static const char *TAG = "battery_monitor";
 
@@ -179,29 +179,41 @@ esp_err_t battery_send_voltage(float voltage)
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Create JSON message
-    cJSON *json = cJSON_CreateObject();
-    cJSON *type = cJSON_CreateString("battery");
-    cJSON *voltage_json = cJSON_CreateNumber(voltage);
+    // Convert voltage to millivolts for transmission
+    uint16_t voltage_mv = (uint16_t)(voltage * 1000.0f);
     
-    cJSON_AddItemToObject(json, "type", type);
-    cJSON_AddItemToObject(json, "voltage", voltage_json);
-    
-    char *json_string = cJSON_Print(json);
-    
-    //ESP_LOGI(TAG, "Sending battery voltage: %.3fV", voltage);
-    ESP_LOGD(TAG, "Battery JSON: %s", json_string);
-    
-    // Send to all WebSocket clients via broadcast
-    esp_err_t ret = http_server_broadcast_ws(json_string);
-    if (ret == ESP_OK) {
-        ESP_LOGD(TAG, "Battery message broadcasted successfully");
+    // Calculate battery level (0-10)
+    uint8_t level = 0;
+    if (battery_config.battery_type == BATTERY_TYPE_1S) {
+        // 1S LiPo: 3.0V-4.2V
+        float percentage = (voltage - 3.0f) / (4.2f - 3.0f) * 100.0f;
+        level = (uint8_t)(percentage / 10.0f);
     } else {
-        ESP_LOGW(TAG, "Failed to broadcast battery message: %s", esp_err_to_name(ret));
+        // 2S LiPo: 6.0V-8.4V  
+        float percentage = (voltage - 6.0f) / (8.4f - 6.0f) * 100.0f;
+        level = (uint8_t)(percentage / 10.0f);
     }
+    level = (level > 10) ? 10 : level;
     
-    free(json_string);
-    cJSON_Delete(json);
+    // Create RCP battery response: [sync][port][voltage_mv_low][voltage_mv_high][level][type][checksum]
+    uint8_t response[7];
+    response[0] = 0xAA;  // Sync byte
+    response[1] = 0x80;  // Battery response port
+    response[2] = voltage_mv & 0xFF;        // Voltage low byte
+    response[3] = (voltage_mv >> 8) & 0xFF; // Voltage high byte  
+    response[4] = level;                    // Battery level (0-10)
+    response[5] = battery_config.battery_type; // Battery type (1S or 2S)
+    
+    // Calculate CRC8 checksum
+    response[6] = rcp_calculate_checksum(response, sizeof(response));
+    
+    // Send binary message via WebSocket broadcast
+    esp_err_t ret = http_server_broadcast_ws_binary(response, sizeof(response));
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "RCP battery message broadcasted: %.3fV, level=%d/10, type=%dS", voltage, level, battery_config.battery_type);
+    } else {
+        ESP_LOGW(TAG, "Failed to broadcast RCP battery message: %s", esp_err_to_name(ret));
+    }
     
     return ret;
 }
@@ -212,40 +224,17 @@ esp_err_t battery_send_init_message(void *req)
         return ESP_OK;
     }
 
-    // Create initialization JSON message
-    cJSON *json = cJSON_CreateObject();
-    cJSON *type = cJSON_CreateString("init");
-    
-    // Battery type string
-    const char *battery_type_str = (battery_config.battery_type == BATTERY_TYPE_1S) ? "1S" : "2S";
-    cJSON *battery_type_json = cJSON_CreateString(battery_type_str);
-    
-    cJSON_AddItemToObject(json, "type", type);
-    cJSON_AddItemToObject(json, "battery_type", battery_type_json);
-    
-    char *json_string = cJSON_Print(json);
-    
-    ESP_LOGI(TAG, "Sending battery init message: %s", json_string);
-    
-    // TODO: Send via WebSocket when req is available
-    if (req != NULL) {
-        httpd_req_t *request = (httpd_req_t *)req;
-        httpd_ws_frame_t ws_pkt;
-        memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-        ws_pkt.payload = (uint8_t *)json_string;
-        ws_pkt.len = strlen(json_string);
-        ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-        
-        esp_err_t ret = httpd_ws_send_frame(request, &ws_pkt);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send WebSocket frame: %s", esp_err_to_name(ret));
-        }
+    // Send initial battery reading immediately via RCP
+    float voltage = 0.0f;
+    esp_err_t ret = battery_get_voltage(&voltage);
+    if (ret == ESP_OK) {
+        ret = battery_send_voltage(voltage);
+        ESP_LOGI(TAG, "RCP battery init: %.3fV, type=%dS", voltage, battery_config.battery_type);
+    } else {
+        ESP_LOGW(TAG, "Failed to read initial battery voltage: %s", esp_err_to_name(ret));
     }
     
-    free(json_string);
-    cJSON_Delete(json);
-    
-    return ESP_OK;
+    return ret;
 }
 
 /**

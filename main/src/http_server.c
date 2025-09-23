@@ -1,8 +1,8 @@
 #include <sys/unistd.h>
+#include <sys/socket.h>
 #include <esp_timer.h>
 #include <esp_log.h>
 #include <esp_http_server.h>
-#include <cJSON.h>
 #include <esp_system.h>
 #include <esp_chip_info.h>
 #include <esp_heap_caps.h>
@@ -13,6 +13,7 @@
 #include "project_config.h"
 #include "http_server.h"
 #include "ota.h"
+#include "rcp_protocol.h"
 
 #if ENABLE_LED_CONTROL
 #include "led_control.h"
@@ -45,8 +46,8 @@ static httpd_handle_t server = NULL;
 
 // WebSocket client management
 #define MAX_WS_CLIENTS 5
-#define WS_HEARTBEAT_INTERVAL_MS 10000  // 10 seconds
-#define WS_CLIENT_TIMEOUT_MS 30000      // 30 seconds
+#define WS_HEARTBEAT_INTERVAL_MS 30000  // 30 seconds (less aggressive)
+#define WS_CLIENT_TIMEOUT_MS 60000      // 60 seconds (more tolerant)
 
 typedef struct {
     int fd;
@@ -104,15 +105,14 @@ static bool is_ws_client_valid(int fd) {
         return false;
     }
     
-    // Try to send a ping frame to check if connection is alive
-    httpd_ws_frame_t ping_frame = {
-        .type = HTTPD_WS_TYPE_PING,
-        .payload = NULL,
-        .len = 0
-    };
+    // Check socket status using SO_ERROR to avoid sending frames
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) != 0) {
+        return false; // Failed to get socket status
+    }
     
-    esp_err_t ret = httpd_ws_send_frame_async(server, fd, &ping_frame);
-    return (ret == ESP_OK);
+    return (error == 0); // Socket is valid if no error
 }
 
 // Function to clean up invalid WebSocket clients
@@ -171,6 +171,44 @@ esp_err_t http_server_broadcast_ws(const char *message) {
     return ESP_OK;
 }
 
+// Function to broadcast binary message to all WebSocket clients
+esp_err_t http_server_broadcast_ws_binary(const void *data, size_t len) {
+    if (server == NULL || data == NULL || len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    httpd_ws_frame_t ws_pkt;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    ws_pkt.payload = (uint8_t *)data;
+    ws_pkt.len = len;
+    ws_pkt.type = HTTPD_WS_TYPE_BINARY;
+
+    int sent_count = 0;
+    int removed_count = 0;
+    
+    // Iterate backwards to safely remove clients during iteration
+    for (int i = ws_client_count - 1; i >= 0; i--) {
+        esp_err_t ret = httpd_ws_send_frame_async(server, ws_clients[i].fd, &ws_pkt);
+        if (ret == ESP_OK) {
+            sent_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed to send binary to client %d: %s - removing client", 
+                     ws_clients[i].fd, esp_err_to_name(ret));
+            
+            // Remove disconnected client from list
+            remove_ws_client(ws_clients[i].fd);
+            removed_count++;
+        }
+    }
+    
+    if (removed_count > 0) {
+        ESP_LOGI(TAG, "Removed %d disconnected WebSocket clients", removed_count);
+    }
+    
+    ESP_LOGD(TAG, "Binary broadcast sent to %d/%d clients (%zu bytes)", sent_count, ws_client_count, len);
+    return ESP_OK;
+}
+
 // Function to manually cleanup invalid WebSocket clients
 void http_server_cleanup_ws_clients(void) {
     if (server == NULL) {
@@ -186,23 +224,38 @@ int http_server_get_ws_client_count(void) {
 
 // WebSocket heartbeat functions
 static void send_ping_to_client(int fd) {
-    if (server && is_ws_client_valid(fd)) {
-        httpd_ws_frame_t ping_frame = {
-            .type = HTTPD_WS_TYPE_PING,
-            .payload = NULL,
-            .len = 0
-        };
-        
-        esp_err_t ret = httpd_ws_send_frame_async(server, fd, &ping_frame);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to send ping to client fd=%d: %s", fd, esp_err_to_name(ret));
+    if (!server || fd <= 0) {
+        return;
+    }
+    
+    // Check if client is valid before sending ping
+    if (!is_ws_client_valid(fd)) {
+        ESP_LOGD(TAG, "Client fd=%d is invalid, removing from list", fd);
+        remove_ws_client(fd);
+        return;
+    }
+    
+    httpd_ws_frame_t ping_frame = {
+        .type = HTTPD_WS_TYPE_PING,
+        .payload = NULL,
+        .len = 0
+    };
+    
+    esp_err_t ret = httpd_ws_send_frame_async(server, fd, &ping_frame);
+    if (ret != ESP_OK) {
+        // Be more selective about which errors cause client removal
+        if (ret == ESP_ERR_INVALID_ARG || ret == ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Failed to send ping to client fd=%d: %s - removing client", fd, esp_err_to_name(ret));
             remove_ws_client(fd);
         } else {
-            ws_client_info_t* client = find_ws_client(fd);
-            if (client) {
-                client->last_ping_time = esp_timer_get_time() / 1000;
-                client->waiting_for_pong = true;
-            }
+            ESP_LOGD(TAG, "Temporary ping failure to client fd=%d: %s", fd, esp_err_to_name(ret));
+        }
+    } else {
+        ws_client_info_t* client = find_ws_client(fd);
+        if (client) {
+            client->last_ping_time = esp_timer_get_time() / 1000;
+            client->waiting_for_pong = true;
+            ESP_LOGD(TAG, "Ping sent to client fd=%d", fd);
         }
     }
 }
@@ -213,11 +266,18 @@ static void check_client_timeouts(void) {
     for (int i = ws_client_count - 1; i >= 0; i--) {
         ws_client_info_t* client = &ws_clients[i];
         
-        // Check if client hasn't responded to ping
-        if (client->waiting_for_pong && 
-            (current_time - client->last_ping_time) > WS_CLIENT_TIMEOUT_MS) {
-            ESP_LOGW(TAG, "Client fd=%d timeout (no pong received), removing", client->fd);
-            remove_ws_client(client->fd);
+        // Only check timeout if we're actually waiting for a pong
+        if (client->waiting_for_pong) {
+            int64_t time_since_ping = current_time - client->last_ping_time;
+            
+            if (time_since_ping > WS_CLIENT_TIMEOUT_MS) {
+                ESP_LOGW(TAG, "Client fd=%d timeout (no pong received for %lld ms), removing", 
+                         client->fd, time_since_ping);
+                remove_ws_client(client->fd);
+            } else {
+                ESP_LOGD(TAG, "Client fd=%d waiting for pong (%lld/%d ms)", 
+                         client->fd, time_since_ping, WS_CLIENT_TIMEOUT_MS);
+            }
         }
     }
 }
@@ -290,80 +350,30 @@ static esp_err_t ws_handler(httpd_req_t *req)
     uint8_t *buf = NULL;
     memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
     
+    // Get frame length first
     esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
     if (ret != ESP_OK) {
-        // Handle frame errors gracefully instead of closing connection
-        if (ret == ESP_ERR_INVALID_ARG) {
-            ESP_LOGW(TAG, "WebSocket frame masking error (client fd=%d), ignoring frame", httpd_req_to_sockfd(req));
-        } else {
-            ESP_LOGW(TAG, "httpd_ws_recv_frame failed to get frame len with %d (client fd=%d)", ret, httpd_req_to_sockfd(req));
-        }
+        int client_fd = httpd_req_to_sockfd(req);
         
-        // Don't close connection for frame errors - just ignore the bad frame
-        return ESP_OK;
-    }
-    
-    if (ws_pkt.len) {
-        // Validate frame length to prevent buffer overflow
-        if (ws_pkt.len > 1024) {
-            ESP_LOGW(TAG, "WebSocket frame too large (%d bytes), ignoring", ws_pkt.len);
-            return ESP_OK;
-        }
-        
-        buf = calloc(1, ws_pkt.len + 1);
-        if (buf == NULL) {
-            ESP_LOGE(TAG, "Failed to calloc memory for buf");
-            return ESP_ERR_NO_MEM;
-        }
-        
-        ws_pkt.payload = buf;
-        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "httpd_ws_recv_frame failed with %d (client fd=%d), ignoring frame", ret, httpd_req_to_sockfd(req));
-            free(buf);
-            // Don't close connection - just ignore the bad frame
-            return ESP_OK;
-        }
-        
-        // Parse JSON command
-        cJSON *json = cJSON_Parse((char*)ws_pkt.payload);
-        if (json != NULL) {
-            cJSON *type = cJSON_GetObjectItem(json, "type");
-            cJSON *value = cJSON_GetObjectItem(json, "value");
-            
-            if (cJSON_IsString(type) && cJSON_IsNumber(value)) {
-                const char *command_type = type->valuestring;
+        // Handle different types of WebSocket errors
+        switch (ret) {
+            case ESP_ERR_INVALID_ARG:
+            case 259: // ESP_ERR_INVALID_ARG specific value for masking
+                ESP_LOGW(TAG, "WebSocket frame masking error %d (client fd=%d) - removing problematic client", ret, client_fd);
+                remove_ws_client(client_fd);
+                return ESP_FAIL; // Close connection immediately for masking errors
                 
-                if (strcmp(command_type, "speed") == 0) {
-                    int speed_value = (int)value->valuedouble;
-                    //ESP_LOGI(TAG, "Received speed command: %d", speed_value);
-                    process_speed_command(speed_value);
-                } else if (strcmp(command_type, "wheels") == 0) {
-                    int wheels_value = (int)value->valuedouble;
-                    //ESP_LOGI(TAG, "Received wheels command: %d", wheels_value);
-                    process_wheels_command(wheels_value);
-                } else if (strcmp(command_type, "horn") == 0) {
-                    int horn_value = (int)value->valuedouble;
-                    //ESP_LOGI(TAG, "Received horn command: %d", horn_value);
-                    process_horn_command(horn_value);
-                } else if (strcmp(command_type, "light") == 0) {
-                    int light_value = (int)value->valuedouble;
-                    //ESP_LOGI(TAG, "Received light command: %d", light_value);
-                    process_light_command(light_value);
-                }
-            } else {
-                ESP_LOGW(TAG, "Invalid WebSocket command format (client fd=%d)", httpd_req_to_sockfd(req));
-            }
-            
-            cJSON_Delete(json);
-        } else {
-            ESP_LOGW(TAG, "Failed to parse JSON: %s (client fd=%d)", (char*)ws_pkt.payload, httpd_req_to_sockfd(req));
+            case ESP_ERR_TIMEOUT:      
+            case ESP_FAIL: // Generic failure (-1)
+                ESP_LOGD(TAG, "WebSocket receive timeout/failure %d (client fd=%d), ignoring frame", ret, client_fd);
+                return ESP_OK; // Keep connection for temporary issues            default:
+                ESP_LOGW(TAG, "WebSocket receive error %d (client fd=%d), removing client", ret, client_fd);
+                remove_ws_client(client_fd);
+                return ESP_FAIL; // Close connection for unknown errors
         }
-        
-        free(buf);
     }
     
-    // Handle PONG frames for heartbeat
+    // Handle special frame types that don't have payload
     if (ws_pkt.type == HTTPD_WS_TYPE_PONG) {
         int client_fd = httpd_req_to_sockfd(req);
         ws_client_info_t* client = find_ws_client(client_fd);
@@ -372,12 +382,96 @@ static esp_err_t ws_handler(httpd_req_t *req)
             client->waiting_for_pong = false;
             ESP_LOGD(TAG, "Received pong from client fd=%d", client_fd);
         }
+        return ESP_OK;
     }
     
-    // Check if the connection is being closed
     if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
         ESP_LOGI(TAG, "WebSocket connection closed by client");
         remove_ws_client(httpd_req_to_sockfd(req));
+        return ESP_OK;
+    }
+    
+    if (ws_pkt.type == HTTPD_WS_TYPE_PING) {
+        // Respond to ping with pong automatically (handled by ESP-IDF)
+        ESP_LOGD(TAG, "Received ping from client fd=%d", httpd_req_to_sockfd(req));
+        return ESP_OK;
+    }
+    
+    // Process frames with payload
+    if (ws_pkt.len > 0) {
+        // Validate frame length to prevent buffer overflow
+        if (ws_pkt.len > 1024) {
+            ESP_LOGW(TAG, "WebSocket frame too large (%d bytes), ignoring", ws_pkt.len);
+            return ESP_OK;
+        }
+        
+        // Allocate buffer for payload
+        buf = calloc(1, ws_pkt.len + 1);
+        if (buf == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for WebSocket frame (%d bytes)", ws_pkt.len);
+            return ESP_ERR_NO_MEM;
+        }
+        
+        // Receive the actual payload
+        ws_pkt.payload = buf;
+        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+        if (ret != ESP_OK) {
+            int client_fd = httpd_req_to_sockfd(req);
+            
+            // Handle payload receive errors
+            switch (ret) {
+                case ESP_ERR_INVALID_ARG:
+                case 259: // Specific masking error
+                    ESP_LOGW(TAG, "WebSocket payload masking error %d (client fd=%d) - removing client", ret, client_fd);
+                    remove_ws_client(client_fd);
+                    free(buf);
+                    return ESP_FAIL; // Close connection immediately
+                    
+                case ESP_ERR_TIMEOUT:
+                case ESP_FAIL: // Generic receive failure (-1)
+                    ESP_LOGD(TAG, "WebSocket payload timeout/failure %d (client fd=%d), ignoring frame", ret, client_fd);
+                    break;
+                    
+                default:
+                    ESP_LOGW(TAG, "WebSocket payload error %d (client fd=%d), removing client", ret, client_fd);
+                    remove_ws_client(client_fd);
+                    break;
+            }
+            
+            free(buf);
+            return ESP_OK;
+        }
+        
+        // Process frame based on type
+        if (ws_pkt.type == HTTPD_WS_TYPE_BINARY) {
+            ESP_LOGD(TAG, "Received binary WebSocket frame (%d bytes) - processing as RCP", ws_pkt.len);
+            
+            // Process as RCP binary protocol
+            esp_err_t rcp_ret = rcp_process_message(ws_pkt.payload, ws_pkt.len);
+            if (rcp_ret != ESP_OK) {
+                ESP_LOGW(TAG, "RCP: Failed to process binary message: %s", esp_err_to_name(rcp_ret));
+            }
+        } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
+            // Log and reject text frames (RCP only supports binary)
+            ESP_LOGW(TAG, "Received text WebSocket frame (client fd=%d) - RCP only supports binary frames", 
+                     httpd_req_to_sockfd(req));
+        } else if (ws_pkt.type == 5) {
+            // Frame type 5 is often a continuation frame or invalid frame
+            ESP_LOGW(TAG, "Received invalid/continuation WebSocket frame type 5 (client fd=%d) - removing client", 
+                     httpd_req_to_sockfd(req));
+            remove_ws_client(httpd_req_to_sockfd(req));
+            free(buf);
+            return ESP_FAIL;
+        } else {
+            // Log unknown frame types and potentially remove problematic clients
+            ESP_LOGW(TAG, "Received unknown WebSocket frame type %d (client fd=%d) - removing client", 
+                     ws_pkt.type, httpd_req_to_sockfd(req));
+            remove_ws_client(httpd_req_to_sockfd(req));
+            free(buf);
+            return ESP_FAIL;
+        }
+        
+        free(buf);
     }
     
     return ESP_OK;
@@ -450,24 +544,6 @@ static esp_err_t system_info_handler(httpd_req_t *req)
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
     size_t used_heap = total_heap - free_heap;
     
-    size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    size_t used_psram = total_psram - free_psram;
-    
-    size_t total_dma = heap_caps_get_total_size(MALLOC_CAP_DMA);
-    size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
-    size_t used_dma = total_dma - free_dma;
-    
-    // Get IRAM information
-    size_t total_iram = heap_caps_get_total_size(MALLOC_CAP_IRAM_8BIT);
-    size_t free_iram = heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT);
-    size_t used_iram = total_iram - free_iram;
-    
-    // Get DRAM information (internal 8-bit accessible)
-    size_t total_dram = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    size_t free_dram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    size_t used_dram = total_dram - free_dram;
-    
     // Get CPU frequency
     rtc_cpu_freq_config_t cpu_config;
     rtc_clk_cpu_freq_get_config(&cpu_config);
@@ -480,132 +556,89 @@ static esp_err_t system_info_handler(httpd_req_t *req)
         flash_size = partition->size + partition->address; // Approximate total flash size
     }
     
-    // Create JSON response
-    cJSON *json = cJSON_CreateObject();
-    cJSON *chip = cJSON_CreateObject();
-    cJSON *memory = cJSON_CreateObject();
-    cJSON *heap = cJSON_CreateObject();
-    cJSON *psram = cJSON_CreateObject();
-    cJSON *dma = cJSON_CreateObject();
-    cJSON *iram = cJSON_CreateObject();
-    cJSON *dram = cJSON_CreateObject();
+    // Create binary system info response
+    // Structure: [chip_model][revision][cores][cpu_freq][features][flash_size][heap_total][heap_used][heap_free][ws_clients]
+    uint8_t response[32];
+    int index = 0;
     
-    // Chip information
-    const char* chip_model;
+    // Chip model (1 byte): 0=Unknown, 1=ESP32, 2=ESP32-S2, 3=ESP32-S3, 4=ESP32-C3
+    uint8_t chip_model_id = 0;
     switch(chip_info.model) {
-        case CHIP_ESP32: chip_model = "ESP32"; break;
-        case CHIP_ESP32S2: chip_model = "ESP32-S2"; break;
-        case CHIP_ESP32S3: chip_model = "ESP32-S3"; break;
-        case CHIP_ESP32C3: chip_model = "ESP32-C3"; break;
-        default: chip_model = "Unknown"; break;
+        case CHIP_ESP32: chip_model_id = 1; break;
+        case CHIP_ESP32S2: chip_model_id = 2; break;
+        case CHIP_ESP32S3: chip_model_id = 3; break;
+        case CHIP_ESP32C3: chip_model_id = 4; break;
+        default: chip_model_id = 0; break;
+    }
+    response[index++] = chip_model_id;
+    
+    // Chip revision (1 byte)
+    response[index++] = (uint8_t)chip_info.revision;
+    
+    // CPU cores (1 byte)
+    response[index++] = (uint8_t)chip_info.cores;
+    
+    // CPU frequency in MHz (2 bytes, little endian)
+    response[index++] = cpu_freq & 0xFF;
+    response[index++] = (cpu_freq >> 8) & 0xFF;
+    
+    // Features (1 byte): bit 0=WiFi, bit 1=Bluetooth, bit 2=BLE
+    uint8_t features = 0;
+    if (chip_info.features & CHIP_FEATURE_WIFI_BGN) features |= 0x01;
+    if (chip_info.features & CHIP_FEATURE_BT) features |= 0x02;
+    if (chip_info.features & CHIP_FEATURE_BLE) features |= 0x04;
+    response[index++] = features;
+    
+    // Flash size in MB (4 bytes, little endian)
+    uint32_t flash_mb = flash_size / (1024 * 1024);
+    response[index++] = flash_mb & 0xFF;
+    response[index++] = (flash_mb >> 8) & 0xFF;
+    response[index++] = (flash_mb >> 16) & 0xFF;
+    response[index++] = (flash_mb >> 24) & 0xFF;
+    
+    // Heap total in KB (4 bytes, little endian)
+    uint32_t heap_total_kb = total_heap / 1024;
+    response[index++] = heap_total_kb & 0xFF;
+    response[index++] = (heap_total_kb >> 8) & 0xFF;
+    response[index++] = (heap_total_kb >> 16) & 0xFF;
+    response[index++] = (heap_total_kb >> 24) & 0xFF;
+    
+    // Heap used in KB (4 bytes, little endian)
+    uint32_t heap_used_kb = used_heap / 1024;
+    response[index++] = heap_used_kb & 0xFF;
+    response[index++] = (heap_used_kb >> 8) & 0xFF;
+    response[index++] = (heap_used_kb >> 16) & 0xFF;
+    response[index++] = (heap_used_kb >> 24) & 0xFF;
+    
+    // Heap free in KB (4 bytes, little endian)
+    uint32_t heap_free_kb = free_heap / 1024;
+    response[index++] = heap_free_kb & 0xFF;
+    response[index++] = (heap_free_kb >> 8) & 0xFF;
+    response[index++] = (heap_free_kb >> 16) & 0xFF;
+    response[index++] = (heap_free_kb >> 24) & 0xFF;
+    
+    // WebSocket clients count (1 byte)
+    response[index++] = (uint8_t)http_server_get_ws_client_count();
+    
+    // Heap usage percentage (1 byte)
+    uint8_t heap_usage = (used_heap * 100) / total_heap;
+    response[index++] = heap_usage;
+    
+    // Reserved bytes for future use (fill remaining with 0)
+    while (index < sizeof(response)) {
+        response[index++] = 0;
     }
     
-    cJSON_AddStringToObject(chip, "model", chip_model);
-    cJSON_AddNumberToObject(chip, "cores", chip_info.cores);
-    cJSON_AddNumberToObject(chip, "revision", chip_info.revision);
-    cJSON_AddNumberToObject(chip, "cpu_freq_mhz", cpu_freq);
-    cJSON_AddBoolToObject(chip, "has_wifi", (chip_info.features & CHIP_FEATURE_WIFI_BGN) != 0);
-    cJSON_AddBoolToObject(chip, "has_bluetooth", (chip_info.features & CHIP_FEATURE_BT) != 0);
-    cJSON_AddBoolToObject(chip, "has_ble", (chip_info.features & CHIP_FEATURE_BLE) != 0);
-    cJSON_AddNumberToObject(chip, "flash_size_mb", flash_size / (1024 * 1024));
-    
-    // Heap memory
-    cJSON_AddNumberToObject(heap, "total_bytes", total_heap);
-    cJSON_AddNumberToObject(heap, "used_bytes", used_heap);
-    cJSON_AddNumberToObject(heap, "free_bytes", free_heap);
-    cJSON_AddNumberToObject(heap, "usage_percent", (used_heap * 100) / total_heap);
-    
-    // PSRAM memory
-    if (total_psram > 0) {
-        cJSON_AddNumberToObject(psram, "total_bytes", total_psram);
-        cJSON_AddNumberToObject(psram, "used_bytes", used_psram);
-        cJSON_AddNumberToObject(psram, "free_bytes", free_psram);
-        cJSON_AddNumberToObject(psram, "usage_percent", (used_psram * 100) / total_psram);
-    } else {
-        cJSON_AddNumberToObject(psram, "total_bytes", 0);
-        cJSON_AddNumberToObject(psram, "used_bytes", 0);
-        cJSON_AddNumberToObject(psram, "free_bytes", 0);
-        cJSON_AddNumberToObject(psram, "usage_percent", 0);
-    }
-    
-    // DMA memory
-    cJSON_AddNumberToObject(dma, "total_bytes", total_dma);
-    cJSON_AddNumberToObject(dma, "used_bytes", used_dma);
-    cJSON_AddNumberToObject(dma, "free_bytes", free_dma);
-    cJSON_AddNumberToObject(dma, "usage_percent", (used_dma * 100) / total_dma);
-    
-    // IRAM memory
-    cJSON_AddNumberToObject(iram, "total_bytes", total_iram);
-    cJSON_AddNumberToObject(iram, "used_bytes", used_iram);
-    cJSON_AddNumberToObject(iram, "free_bytes", free_iram);
-    cJSON_AddNumberToObject(iram, "usage_percent", total_iram > 0 ? (used_iram * 100) / total_iram : 0);
-    
-    // DRAM memory
-    cJSON_AddNumberToObject(dram, "total_bytes", total_dram);
-    cJSON_AddNumberToObject(dram, "used_bytes", used_dram);
-    cJSON_AddNumberToObject(dram, "free_bytes", free_dram);
-    cJSON_AddNumberToObject(dram, "usage_percent", total_dram > 0 ? (used_dram * 100) / total_dram : 0);
-    
-    // Add memory objects to memory
-    cJSON_AddItemToObject(memory, "heap", heap);
-    cJSON_AddItemToObject(memory, "psram", psram);
-    cJSON_AddItemToObject(memory, "dma", dma);
-    cJSON_AddItemToObject(memory, "iram", iram);
-    cJSON_AddItemToObject(memory, "dram", dram);
-    
-    // Add main objects to JSON
-    cJSON_AddItemToObject(json, "chip", chip);
-    cJSON_AddItemToObject(json, "memory", memory);
-    
-#if ENABLE_MOTOR_CONTROL
-    // Motor status information
-    cJSON *motor = cJSON_CreateObject();
-    cJSON_AddBoolToObject(motor, "enabled", true);
-    
-    motor_state_t motor_state;
-    esp_err_t motor_ret = motor_control_get_state(&motor_state);
-    if (motor_ret == ESP_OK) {
-        cJSON_AddNumberToObject(motor, "speed", motor_state.speed);
-        cJSON_AddNumberToObject(motor, "mode", motor_state.mode);
-        cJSON_AddBoolToObject(motor, "active", motor_state.enabled);
-        
-        const char* mode_str;
-        switch (motor_state.mode) {
-            case MOTOR_MODE_FORWARD: mode_str = "forward"; break;
-            case MOTOR_MODE_REVERSE: mode_str = "reverse"; break;
-            case MOTOR_MODE_BRAKE: mode_str = "brake"; break;
-            case MOTOR_MODE_FREE: mode_str = "free"; break;
-            default: mode_str = "unknown"; break;
-        }
-        cJSON_AddStringToObject(motor, "mode_str", mode_str);
-    } else {
-        cJSON_AddNumberToObject(motor, "speed", 0);
-        cJSON_AddNumberToObject(motor, "mode", MOTOR_MODE_FREE);
-        cJSON_AddBoolToObject(motor, "active", false);
-        cJSON_AddStringToObject(motor, "mode_str", "error");
-    }
-    
-    cJSON_AddItemToObject(json, "motor", motor);
-#else
-    // Motor disabled
-    cJSON *motor = cJSON_CreateObject();
-    cJSON_AddBoolToObject(motor, "enabled", false);
-    cJSON_AddStringToObject(motor, "status", "disabled");
-    cJSON_AddItemToObject(json, "motor", motor);
-#endif
-    
-    // Convert to string and send response
-    char *json_string = cJSON_Print(json);
-    
-    httpd_resp_set_type(req, "application/json");
+    // Send binary response
+    httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t ret = httpd_resp_send(req, json_string, strlen(json_string));
+    httpd_resp_set_hdr(req, "Content-Length", "32");
     
-    // Clean up
-    free(json_string);
-    cJSON_Delete(json);
-    
-    return ret;
+    ESP_LOGI(TAG, "Sending binary system info: chip=%d, rev=%d, cores=%d, freq=%dMHz, features=0x%02X, flash=%dMB, heap=%d/%dKB (%d%%), clients=%d", 
+             chip_model_id, chip_info.revision, chip_info.cores, cpu_freq, features, flash_mb, 
+             heap_used_kb, heap_total_kb, heap_usage, http_server_get_ws_client_count());
+             
+    return httpd_resp_send(req, (const char *)response, sizeof(response));
 }
 
 static esp_err_t httpd_get_handler(httpd_req_t *req)
@@ -786,6 +819,12 @@ void http_server_start(void)
     // Start WebSocket heartbeat timer
     start_ws_heartbeat_timer();
     
+    // Initialize RCP protocol
+    esp_err_t rcp_ret = rcp_init();
+    if (rcp_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize RCP protocol: %s", esp_err_to_name(rcp_ret));
+    }
+    
     ESP_LOGI(TAG, "HTTP server started successfully");
 }
 
@@ -796,6 +835,9 @@ void http_server_stop(void)
         
         // Stop WebSocket heartbeat timer
         stop_ws_heartbeat_timer();
+        
+        // Deinitialize RCP protocol
+        rcp_deinit();
         
         // Clear all WebSocket clients
         ws_client_count = 0;

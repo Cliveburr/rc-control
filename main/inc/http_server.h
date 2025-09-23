@@ -14,6 +14,9 @@ void* http_server_get_handle(void);
 // WebSocket broadcast function
 esp_err_t http_server_broadcast_ws(const char *message);
 
+// WebSocket binary broadcast function  
+esp_err_t http_server_broadcast_ws_binary(const void *data, size_t len);
+
 // WebSocket client management
 void http_server_cleanup_ws_clients(void);
 int http_server_get_ws_client_count(void);
