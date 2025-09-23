@@ -1,5 +1,5 @@
 
-const DEBUG = true;
+const DEBUG = false;
 
 function makeView() {
     const img = document.getElementsByTagName('img')[0];
@@ -46,42 +46,208 @@ function makeView() {
 // WebSocket connection for sending commands
 let ws = null;
 let batteryType = '1S'; // Default battery type, will be updated from ESP32
+let wsReconnectAttempts = 0;
+let maxReconnectAttempts = 100;
+let reconnectInterval = 3000; // Start with 3 seconds
+
+// Command queue to prevent sending too many commands at once
+let commandQueue = [];
+let isProcessingQueue = false;
+let maxQueueSize = 10;
+
+// Command caching to avoid sending duplicate values
+let lastSpeedValue = null;
+let lastWheelsValue = null;
+let lastHornValue = null;
+let lastLightValue = null;
+
+// Command throttling to prevent spam during multi-touch
+let speedCommandTimeout = null;
+let wheelsCommandTimeout = null;
+const COMMAND_THROTTLE_MS = 50; // Minimum time between commands
+
+// Multi-touch monitoring
+let activeControls = new Set();
+
+function setControlActive(controlType, active) {
+    if (active) {
+        activeControls.add(controlType);
+    } else {
+        activeControls.delete(controlType);
+    }
+    
+    if (DEBUG && activeControls.size > 1) {
+        // console.log(`Multi-touch detected: ${Array.from(activeControls).join(', ')} controls active`);
+    }
+}
+
+// Function to reset command cache (useful after reconnection)
+function resetCommandCache() {
+    lastSpeedValue = null;
+    lastWheelsValue = null;
+    lastHornValue = null;
+    lastLightValue = null;
+    
+    // Clear any pending throttled commands
+    if (speedCommandTimeout) {
+        clearTimeout(speedCommandTimeout);
+        speedCommandTimeout = null;
+    }
+    if (wheelsCommandTimeout) {
+        clearTimeout(wheelsCommandTimeout);
+        wheelsCommandTimeout = null;
+    }
+    
+    // Clear command queue
+    commandQueue = [];
+    isProcessingQueue = false;
+    
+    // console.log('Command cache reset - next commands will be sent regardless of previous values');
+}
+
+// Command queue processing functions
+function processCommandQueue() {
+    if (isProcessingQueue || commandQueue.length === 0) {
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        // Clear queue if WebSocket is not ready
+        commandQueue = [];
+        return;
+    }
+    
+    isProcessingQueue = true;
+    
+    const command = commandQueue.shift();
+    
+    try {
+        ws.send(JSON.stringify(command));
+        // Add small delay between commands to prevent frame corruption
+        setTimeout(() => {
+            isProcessingQueue = false;
+            processCommandQueue(); // Process next command
+        }, 10); // 10ms delay between commands
+    } catch (error) {
+        console.error(`Failed to send command:`, error);
+        isProcessingQueue = false;
+        // Trigger reconnection if send fails
+        if (ws.readyState !== WebSocket.OPEN) {
+            initWebSocket();
+        }
+    }
+}
+
+function queueCommand(type, value) {
+    const command = { type: type, value: value };
+    
+    // Remove any existing command of the same type to prevent duplicates
+    commandQueue = commandQueue.filter(cmd => cmd.type !== type);
+    
+    // Add new command
+    commandQueue.push(command);
+    
+    // Limit queue size
+    if (commandQueue.length > maxQueueSize) {
+        commandQueue = commandQueue.slice(-maxQueueSize);
+    }
+    
+    // Start processing
+    processCommandQueue();
+}
 
 function initWebSocket() {
     if (DEBUG) {
-        console.log('DEBUG mode: WebSocket disabled for testing');
+        // console.log('DEBUG mode: WebSocket disabled for testing');
         return;
     }
     
     try {
+        // Close existing connection if any
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+            ws.close();
+        }
+        
         ws = new WebSocket(`ws://${window.location.host}/ws`);
         
+        // Set a timeout for connection
+        let connectionTimeout = setTimeout(() => {
+            if (ws.readyState === WebSocket.CONNECTING) {
+                console.warn('WebSocket connection timeout, closing...');
+                ws.close();
+            }
+        }, 5000); // 5 second timeout
+        
         ws.onopen = () => {
-            console.log('WebSocket connected for control commands');
+            clearTimeout(connectionTimeout);
+            // console.log('WebSocket connected for control commands');
+            wsReconnectAttempts = 0; // Reset reconnect attempts on successful connection
+            reconnectInterval = 3000; // Reset reconnect interval
+            
+            // Reset command cache to ensure fresh state after reconnection
+            resetCommandCache();
         };
         
         ws.onmessage = (event) => {
-            handleWebSocketMessage(event.data);
+            try {
+                // Handle binary frames (ping/pong)
+                if (event.data instanceof Blob) {
+                    // Convert blob to arraybuffer to check frame type
+                    event.data.arrayBuffer().then(buffer => {
+                        // This is likely a ping frame, respond with pong
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.pong && ws.pong();
+                        }
+                    });
+                    return;
+                }
+                
+                // Handle text frames (JSON messages)
+                if (typeof event.data === 'string') {
+                    handleWebSocketMessage(event.data);
+                }
+            } catch (error) {
+                console.error('Error handling WebSocket message:', error);
+            }
         };
         
-        ws.onclose = () => {
-            console.log('WebSocket closed');
-            // Tentar reconectar após 3 segundos
-            setTimeout(initWebSocket, 3000);
+        ws.onclose = (event) => {
+            clearTimeout(connectionTimeout);
+            // console.log('WebSocket closed');
+            
+            // Only attempt reconnection if not manually closed and under attempt limit
+            if (event.code !== 1000 && wsReconnectAttempts < maxReconnectAttempts) {
+                wsReconnectAttempts++;
+                // Exponential backoff with jitter
+                const jitter = Math.random() * 1000;
+                const delay = Math.min(reconnectInterval * Math.pow(1.5, wsReconnectAttempts - 1) + jitter, 30000);
+                
+                console.warn(`WebSocket disconnected (attempt ${wsReconnectAttempts}/${maxReconnectAttempts}), reconnecting in ${Math.round(delay/1000)}s...`);
+                setTimeout(initWebSocket, delay);
+            } else if (wsReconnectAttempts >= maxReconnectAttempts) {
+                console.error('WebSocket max reconnection attempts reached. Please refresh the page.');
+            }
         };
         
         ws.onerror = (error) => {
+            clearTimeout(connectionTimeout);
             console.error('WebSocket error:', error);
         };
+        
     } catch (error) {
         console.error('Failed to initialize WebSocket:', error);
+        // Retry connection after delay if initialization fails
+        if (wsReconnectAttempts < maxReconnectAttempts) {
+            wsReconnectAttempts++;
+            setTimeout(initWebSocket, reconnectInterval);
+        }
     }
 }
 
 function handleWebSocketMessage(data) {
     try {
         const message = JSON.parse(data);
-        console.log('Received WebSocket message:', message);
+        //console.log('Received WebSocket message:', message);
         
         switch (message.type) {
             case 'init':
@@ -91,7 +257,7 @@ function handleWebSocketMessage(data) {
                 handleBatteryMessage(message);
                 break;
             default:
-                console.log('Unknown message type:', message.type);
+                // console.log('Unknown message type:', message.type);
         }
     } catch (error) {
         console.error('Failed to parse WebSocket message:', error, data);
@@ -101,7 +267,7 @@ function handleWebSocketMessage(data) {
 function handleInitMessage(message) {
     if (message.battery_type) {
         batteryType = message.battery_type;
-        console.log('Battery type configured:', batteryType);
+        // console.log('Battery type configured:', batteryType);
     }
 }
 
@@ -110,7 +276,7 @@ function handleBatteryMessage(message) {
         const voltage = message.voltage;
         const batteryLevel = calculateBatteryLevel(voltage, batteryType);
         updateBatteryLevel(batteryLevel);
-        console.log(`Battery: ${voltage.toFixed(2)}V (${batteryLevel}/10 levels, ${batteryType})`);
+        //console.log(`Battery: ${voltage.toFixed(2)}V (${batteryLevel}/10 levels, ${batteryType})`);
     }
 }
 
@@ -136,65 +302,115 @@ function calculateBatteryLevel(voltage, type) {
 }
 
 function sendSpeedCommand(value) {
-    sendControlCommand('speed', value);
+    // Clear any pending speed command
+    if (speedCommandTimeout) {
+        clearTimeout(speedCommandTimeout);
+    }
+    
+    // Throttle speed commands to prevent spam during multi-touch
+    speedCommandTimeout = setTimeout(() => {
+        // Only send if value has changed
+        if (lastSpeedValue !== value) {
+            sendControlCommand('speed', value);
+            lastSpeedValue = value;
+        } else {
+            // if (DEBUG) console.log(`Speed command skipped - same value as last: ${value}`);
+        }
+        speedCommandTimeout = null;
+    }, COMMAND_THROTTLE_MS);
 }
 
 function sendWheelsCommand(value) {
-    sendControlCommand('wheels', value);
+    // Clear any pending wheels command
+    if (wheelsCommandTimeout) {
+        clearTimeout(wheelsCommandTimeout);
+    }
+    
+    // Throttle wheels commands to prevent spam during multi-touch
+    wheelsCommandTimeout = setTimeout(() => {
+        // Only send if value has changed
+        if (lastWheelsValue !== value) {
+            sendControlCommand('wheels', value);
+            lastWheelsValue = value;
+        } else {
+            // if (DEBUG) console.log(`Wheels command skipped - same value as last: ${value}`);
+        }
+        wheelsCommandTimeout = null;
+    }, COMMAND_THROTTLE_MS);
 }
 
 function sendControlCommand(type, value) {
+    // Add validation to ensure value is a number
+    if (typeof value !== 'number' || isNaN(value)) {
+        console.error(`Invalid ${type} command value:`, value);
+        return;
+    }
+    
+    // Clamp value to valid range
+    if (type === 'speed' || type === 'wheels') {
+        value = Math.max(-100, Math.min(100, value));
+    }
+    
     if (DEBUG) {
-        console.log(`DEBUG mode: ${type} command (visual test only):`, value);
+        // console.log(`DEBUG mode: ${type} command (visual test only):`, value);
         return;
     }
     
     if (ws && ws.readyState === WebSocket.OPEN) {
-        const command = {
-            type: type,
-            value: value
-        };
-        ws.send(JSON.stringify(command));
-        console.log(`${type} command sent:`, value);
+        // Use command queue instead of sending directly
+        queueCommand(type, value);
     } else {
         console.warn(`WebSocket not connected, cannot send ${type} command:`, value);
+        // Attempt to reconnect if not already connecting
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+            initWebSocket();
+        }
     }
 }
 
 function sendHornCommand(isPressed) {
-    if (DEBUG) {
-        console.log('DEBUG mode: Horn command (visual test only):', isPressed);
-        return;
-    }
+    const hornValue = isPressed ? 1 : 0;
     
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        const command = {
-            type: 'horn',
-            value: isPressed ? 1 : 0
-        };
-        ws.send(JSON.stringify(command));
-        console.log('Horn command sent:', isPressed);
+    // Only send if value has changed
+    if (lastHornValue !== hornValue) {
+        if (DEBUG) {
+            // console.log('DEBUG mode: Horn command (visual test only):', isPressed);
+            lastHornValue = hornValue;
+            return;
+        }
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            queueCommand('horn', hornValue);
+            lastHornValue = hornValue;
+        } else {
+            console.warn('WebSocket not connected, cannot send horn command:', isPressed);
+        }
     } else {
-        console.warn('WebSocket not connected, cannot send horn command:', isPressed);
+        // if (DEBUG) console.log(`Horn command skipped - same value as last: ${isPressed}`);
     }
 }
 
 function sendLightCommand(isOn) {
-    console.log('sendLightCommand called with:', isOn);
-    if (DEBUG) {
-        console.log('DEBUG mode: Light command (visual test only):', isOn);
-        return;
-    }
+    const lightValue = isOn ? 1 : 0;
     
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        const command = {
-            type: 'light',
-            value: isOn ? 1 : 0
-        };
-        ws.send(JSON.stringify(command));
-        console.log('Light command sent:', isOn);
+    // console.log('sendLightCommand called with:', isOn);
+    
+    // Only send if value has changed
+    if (lastLightValue !== lightValue) {
+        if (DEBUG) {
+            // console.log('DEBUG mode: Light command (visual test only):', isOn);
+            lastLightValue = lightValue;
+            return;
+        }
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            queueCommand('light', lightValue);
+            lastLightValue = lightValue;
+        } else {
+            console.warn('WebSocket not connected, cannot send light command:', isOn);
+        }
     } else {
-        console.warn('WebSocket not connected, cannot send light command:', isOn);
+        // console.log('Light command skipped - same value as last:', isOn);
     }
 }
 
@@ -244,12 +460,12 @@ function initGenericControl(controlType, sendCommandFunc) {
         const value = calculateValue(positionPercent);
         sendCommandFunc(value);
         
-        if (DEBUG) console.log(`${controlType}: Posição ${positionPercent.toFixed(1)}%, Valor: ${value}`);
+        // if (DEBUG) console.log(`${controlType}: Posição ${positionPercent.toFixed(1)}%, Valor: ${value}`);
     }
     
     // Função para forçar reset ao zero (útil para reset manual)
     function forceResetToZero() {
-        if (DEBUG) console.log(`${controlType}: Reset forçado ao zero`);
+        // if (DEBUG) console.log(`${controlType}: Reset forçado ao zero`);
         
         if (isVertical) {
             controlIndicator.style.transition = 'top 0.3s ease-out';
@@ -270,7 +486,7 @@ function initGenericControl(controlType, sendCommandFunc) {
     
     // Função para retornar ao zero (modificada para speed control)
     function returnToZero() {
-        if (DEBUG) console.log(`${controlType}: Verificando zona de reset`);
+        // if (DEBUG) console.log(`${controlType}: Verificando zona de reset`);
         
         // Para o controle speed, só resetar se estiver próximo ao zero
         if (isVertical) { // Speed control
@@ -344,6 +560,9 @@ function initGenericControl(controlType, sendCommandFunc) {
         ev.preventDefault();
         
         if (DEBUG) console.log(`${controlType}: touchstart - targetTouches: ${ev.targetTouches.length}`);
+        
+        // Mark this control as active for multi-touch monitoring
+        setControlActive(controlType, true);
         
         // Detectar duplo toque para reset manual (apenas para speed)
         if (isVertical && ev.targetTouches.length === 1) {
@@ -443,9 +662,10 @@ function initGenericControl(controlType, sendCommandFunc) {
                 // Remover do cache
                 touchCache.splice(cacheEntry.index, 1);
                 
-                // Se não há mais toques, retornar ao zero
+                // Se não há mais toques, retornar ao zero e marcar como inativo
                 if (touchCache.length === 0) {
                     if (DEBUG) console.log(`${controlType}: Último toque removido, retornando ao zero`);
+                    setControlActive(controlType, false);
                     returnToZero();
                 }
             }
@@ -468,6 +688,9 @@ function initGenericControl(controlType, sendCommandFunc) {
         
         ev.preventDefault();
         mouseActive = true;
+        
+        // Mark this control as active
+        setControlActive(controlType, true);
         
         const rect = controlTrack.getBoundingClientRect();
         let clickPercent;
@@ -508,6 +731,7 @@ function initGenericControl(controlType, sendCommandFunc) {
         if (!mouseActive) return;
         
         mouseActive = false;
+        setControlActive(controlType, false);
         returnToZero();
         
         if (DEBUG) console.log(`${controlType}: Mouse up`);
@@ -537,7 +761,7 @@ function initGenericControl(controlType, sendCommandFunc) {
     // Inicializar na posição zero
     updateControl(zeroPosition);
     
-    if (DEBUG) console.log(`${controlType}: Controle inicializado com cache local`);
+    // if (DEBUG) console.log(`${controlType}: Controle inicializado com cache local`);
 }
 
 function initSpeedControl() {
@@ -790,7 +1014,7 @@ function saveWifiConfig() {
     // Here you would typically send the WiFi config to the ESP32
     // For now, just show a success message
     alert('Configuração WiFi salva com sucesso!');
-    console.log('WiFi Config:', { ssid, password });
+    // console.log('WiFi Config:', { ssid, password });
 }
 
 async function uploadOTAFirmware() {
@@ -1057,7 +1281,7 @@ function startBatteryDebugLoop() {
             }
             
             updateBatteryLevel(batteryLevel);
-            console.log('Battery level debug:', batteryLevel);
+            // console.log('Battery level debug:', batteryLevel);
         }, 1000); // Update every 1 second
     }
 }
@@ -1122,7 +1346,7 @@ function main() {
     if (!DEBUG) {
         initWebSocket();
     } else {
-        console.log('DEBUG mode enabled: Running in visual test mode without WebSocket');
+        // console.log('DEBUG mode enabled: Running in visual test mode without WebSocket');
         // Start battery debug loop
         startBatteryDebugLoop();
     }

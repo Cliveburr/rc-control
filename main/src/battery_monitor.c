@@ -255,6 +255,9 @@ static void battery_monitor_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Battery monitoring task started");
     
+    int cleanup_counter = 0;
+    const int CLEANUP_INTERVAL = 10; // Clean WebSocket clients every 10 battery readings
+    
     while (battery_task_running) {
         float voltage = 0.0;
         esp_err_t ret = battery_get_voltage(&voltage);
@@ -263,6 +266,13 @@ static void battery_monitor_task(void *pvParameters)
             battery_send_voltage(voltage);
         } else {
             ESP_LOGE(TAG, "Failed to read battery voltage: %s", esp_err_to_name(ret));
+        }
+        
+        // Periodic WebSocket client cleanup
+        cleanup_counter++;
+        if (cleanup_counter >= CLEANUP_INTERVAL) {
+            http_server_cleanup_ws_clients();
+            cleanup_counter = 0;
         }
         
         vTaskDelay(pdMS_TO_TICKS(battery_config.read_interval_ms));

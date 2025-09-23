@@ -18,6 +18,10 @@
 #include "battery_monitor.h"
 #endif
 
+#if ENABLE_MOTOR_CONTROL
+#include "motor_control.h"
+#endif
+
 // #include <sys/unistd.h>
 // #include "esp_log.h"
 // #include "esp_system.h"
@@ -47,6 +51,10 @@ void app_main(void)
 
 #if ENABLE_BATTERY_MONITORING
     battery_monitor_init();
+#endif
+
+#if ENABLE_MOTOR_CONTROL
+    motor_control_init();
 #endif
 
 #if ENABLE_OTA_UPDATES
