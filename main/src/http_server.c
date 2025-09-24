@@ -46,41 +46,28 @@ static httpd_handle_t server = NULL;
 
 // WebSocket client management
 #define MAX_WS_CLIENTS 5
-#define WS_HEARTBEAT_INTERVAL_MS 30000  // 30 seconds (less aggressive)
-#define WS_CLIENT_TIMEOUT_MS 60000      // 60 seconds (more tolerant)
 
-typedef struct {
-    int fd;
-    int64_t last_ping_time;
-    int64_t last_pong_time;
-    bool waiting_for_pong;
-} ws_client_info_t;
-
-static ws_client_info_t ws_clients[MAX_WS_CLIENTS];
+static int ws_client_fds[MAX_WS_CLIENTS];
 static int ws_client_count = 0;
-
-// Timer for WebSocket heartbeat
-static esp_timer_handle_t ws_heartbeat_timer = NULL;
 
 // Function to add WebSocket client
 static void add_ws_client(int fd) {
     if (ws_client_count < MAX_WS_CLIENTS) {
-        ws_clients[ws_client_count].fd = fd;
-        ws_clients[ws_client_count].last_ping_time = esp_timer_get_time() / 1000;
-        ws_clients[ws_client_count].last_pong_time = esp_timer_get_time() / 1000;
-        ws_clients[ws_client_count].waiting_for_pong = false;
+        ws_client_fds[ws_client_count] = fd;
         ws_client_count++;
-        ESP_LOGI(TAG, "WebSocket client added, total clients: %d", ws_client_count);
+        ESP_LOGI(TAG, "WebSocket client fd=%d added, total clients: %d", fd, ws_client_count);
+    } else {
+        ESP_LOGW(TAG, "Cannot add WebSocket client fd=%d - max clients reached", fd);
     }
 }
 
 // Function to remove WebSocket client
 static void remove_ws_client(int fd) {
     for (int i = 0; i < ws_client_count; i++) {
-        if (ws_clients[i].fd == fd) {
+        if (ws_client_fds[i] == fd) {
             // Shift remaining clients
             for (int j = i; j < ws_client_count - 1; j++) {
-                ws_clients[j] = ws_clients[j + 1];
+                ws_client_fds[j] = ws_client_fds[j + 1];
             }
             ws_client_count--;
             ESP_LOGI(TAG, "WebSocket client fd=%d removed, total clients: %d", fd, ws_client_count);
@@ -89,49 +76,7 @@ static void remove_ws_client(int fd) {
     }
 }
 
-// Function to find WebSocket client info
-static ws_client_info_t* find_ws_client(int fd) {
-    for (int i = 0; i < ws_client_count; i++) {
-        if (ws_clients[i].fd == fd) {
-            return &ws_clients[i];
-        }
-    }
-    return NULL;
-}
 
-// Function to check if WebSocket client is still valid
-static bool is_ws_client_valid(int fd) {
-    if (fd <= 0) {
-        return false;
-    }
-    
-    // Check socket status using SO_ERROR to avoid sending frames
-    int error = 0;
-    socklen_t len = sizeof(error);
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) != 0) {
-        return false; // Failed to get socket status
-    }
-    
-    return (error == 0); // Socket is valid if no error
-}
-
-// Function to clean up invalid WebSocket clients
-static void cleanup_invalid_ws_clients(void) {
-    int removed_count = 0;
-    
-    // Iterate backwards to safely remove clients during iteration
-    for (int i = ws_client_count - 1; i >= 0; i--) {
-        if (!is_ws_client_valid(ws_clients[i].fd)) {
-            ESP_LOGW(TAG, "Removing invalid WebSocket client fd=%d", ws_clients[i].fd);
-            remove_ws_client(ws_clients[i].fd);
-            removed_count++;
-        }
-    }
-    
-    if (removed_count > 0) {
-        ESP_LOGI(TAG, "Cleanup removed %d invalid WebSocket clients", removed_count);
-    }
-}
 
 // Function to broadcast message to all WebSocket clients
 esp_err_t http_server_broadcast_ws(const char *message) {
@@ -150,15 +95,15 @@ esp_err_t http_server_broadcast_ws(const char *message) {
     
     // Iterate backwards to safely remove clients during iteration
     for (int i = ws_client_count - 1; i >= 0; i--) {
-        esp_err_t ret = httpd_ws_send_frame_async(server, ws_clients[i].fd, &ws_pkt);
+        esp_err_t ret = httpd_ws_send_frame_async(server, ws_client_fds[i], &ws_pkt);
         if (ret == ESP_OK) {
             sent_count++;
         } else {
             ESP_LOGW(TAG, "Failed to send to client %d: %s - removing client", 
-                     ws_clients[i].fd, esp_err_to_name(ret));
+                     ws_client_fds[i], esp_err_to_name(ret));
             
             // Remove disconnected client from list
-            remove_ws_client(ws_clients[i].fd);
+            remove_ws_client(ws_client_fds[i]);
             removed_count++;
         }
     }
@@ -188,15 +133,15 @@ esp_err_t http_server_broadcast_ws_binary(const void *data, size_t len) {
     
     // Iterate backwards to safely remove clients during iteration
     for (int i = ws_client_count - 1; i >= 0; i--) {
-        esp_err_t ret = httpd_ws_send_frame_async(server, ws_clients[i].fd, &ws_pkt);
+        esp_err_t ret = httpd_ws_send_frame_async(server, ws_client_fds[i], &ws_pkt);
         if (ret == ESP_OK) {
             sent_count++;
         } else {
             ESP_LOGW(TAG, "Failed to send binary to client %d: %s - removing client", 
-                     ws_clients[i].fd, esp_err_to_name(ret));
+                     ws_client_fds[i], esp_err_to_name(ret));
             
             // Remove disconnected client from list
-            remove_ws_client(ws_clients[i].fd);
+            remove_ws_client(ws_client_fds[i]);
             removed_count++;
         }
     }
@@ -211,10 +156,8 @@ esp_err_t http_server_broadcast_ws_binary(const void *data, size_t len) {
 
 // Function to manually cleanup invalid WebSocket clients
 void http_server_cleanup_ws_clients(void) {
-    if (server == NULL) {
-        return;
-    }
-    cleanup_invalid_ws_clients();
+    // Simple cleanup - no advanced validation needed
+    ESP_LOGD(TAG, "WebSocket client cleanup - %d clients active", ws_client_count);
 }
 
 // Function to get current WebSocket client count
@@ -222,112 +165,9 @@ int http_server_get_ws_client_count(void) {
     return ws_client_count;
 }
 
-// WebSocket heartbeat functions
-static void send_ping_to_client(int fd) {
-    if (!server || fd <= 0) {
-        return;
-    }
-    
-    // Check if client is valid before sending ping
-    if (!is_ws_client_valid(fd)) {
-        ESP_LOGD(TAG, "Client fd=%d is invalid, removing from list", fd);
-        remove_ws_client(fd);
-        return;
-    }
-    
-    httpd_ws_frame_t ping_frame = {
-        .type = HTTPD_WS_TYPE_PING,
-        .payload = NULL,
-        .len = 0
-    };
-    
-    esp_err_t ret = httpd_ws_send_frame_async(server, fd, &ping_frame);
-    if (ret != ESP_OK) {
-        // Be more selective about which errors cause client removal
-        if (ret == ESP_ERR_INVALID_ARG || ret == ESP_ERR_INVALID_STATE) {
-            ESP_LOGW(TAG, "Failed to send ping to client fd=%d: %s - removing client", fd, esp_err_to_name(ret));
-            remove_ws_client(fd);
-        } else {
-            ESP_LOGD(TAG, "Temporary ping failure to client fd=%d: %s", fd, esp_err_to_name(ret));
-        }
-    } else {
-        ws_client_info_t* client = find_ws_client(fd);
-        if (client) {
-            client->last_ping_time = esp_timer_get_time() / 1000;
-            client->waiting_for_pong = true;
-            ESP_LOGD(TAG, "Ping sent to client fd=%d", fd);
-        }
-    }
-}
 
-static void check_client_timeouts(void) {
-    int64_t current_time = esp_timer_get_time() / 1000;
-    
-    for (int i = ws_client_count - 1; i >= 0; i--) {
-        ws_client_info_t* client = &ws_clients[i];
-        
-        // Only check timeout if we're actually waiting for a pong
-        if (client->waiting_for_pong) {
-            int64_t time_since_ping = current_time - client->last_ping_time;
-            
-            if (time_since_ping > WS_CLIENT_TIMEOUT_MS) {
-                ESP_LOGW(TAG, "Client fd=%d timeout (no pong received for %lld ms), removing", 
-                         client->fd, time_since_ping);
-                remove_ws_client(client->fd);
-            } else {
-                ESP_LOGD(TAG, "Client fd=%d waiting for pong (%lld/%d ms)", 
-                         client->fd, time_since_ping, WS_CLIENT_TIMEOUT_MS);
-            }
-        }
-    }
-}
 
-static void ws_heartbeat_timer_callback(void* arg) {
-    // Send ping to all clients
-    for (int i = 0; i < ws_client_count; i++) {
-        send_ping_to_client(ws_clients[i].fd);
-    }
-    
-    // Check for timeouts
-    check_client_timeouts();
-    
-    // Cleanup any invalid clients
-    cleanup_invalid_ws_clients();
-}
 
-static void start_ws_heartbeat_timer(void) {
-    if (ws_heartbeat_timer != NULL) {
-        return; // Timer already started
-    }
-    
-    esp_timer_create_args_t timer_config = {
-        .callback = ws_heartbeat_timer_callback,
-        .arg = NULL,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "ws_heartbeat"
-    };
-    
-    esp_err_t ret = esp_timer_create(&timer_config, &ws_heartbeat_timer);
-    if (ret == ESP_OK) {
-        ret = esp_timer_start_periodic(ws_heartbeat_timer, WS_HEARTBEAT_INTERVAL_MS * 1000);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "WebSocket heartbeat timer started (interval: %d ms)", WS_HEARTBEAT_INTERVAL_MS);
-        } else {
-            ESP_LOGE(TAG, "Failed to start heartbeat timer: %s", esp_err_to_name(ret));
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to create heartbeat timer: %s", esp_err_to_name(ret));
-    }
-}
-
-static void stop_ws_heartbeat_timer(void) {
-    if (ws_heartbeat_timer != NULL) {
-        esp_timer_stop(ws_heartbeat_timer);
-        esp_timer_delete(ws_heartbeat_timer);
-        ws_heartbeat_timer = NULL;
-        ESP_LOGI(TAG, "WebSocket heartbeat timer stopped");
-    }
-}
 
 // WebSocket handler for receiving commands
 static esp_err_t ws_handler(httpd_req_t *req)
@@ -375,13 +215,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
     
     // Handle special frame types that don't have payload
     if (ws_pkt.type == HTTPD_WS_TYPE_PONG) {
-        int client_fd = httpd_req_to_sockfd(req);
-        ws_client_info_t* client = find_ws_client(client_fd);
-        if (client) {
-            client->last_pong_time = esp_timer_get_time() / 1000;
-            client->waiting_for_pong = false;
-            ESP_LOGD(TAG, "Received pong from client fd=%d", client_fd);
-        }
+        ESP_LOGD(TAG, "Received pong from client fd=%d", httpd_req_to_sockfd(req));
         return ESP_OK;
     }
     
@@ -392,7 +226,6 @@ static esp_err_t ws_handler(httpd_req_t *req)
     }
     
     if (ws_pkt.type == HTTPD_WS_TYPE_PING) {
-        // Respond to ping with pong automatically (handled by ESP-IDF)
         ESP_LOGD(TAG, "Received ping from client fd=%d", httpd_req_to_sockfd(req));
         return ESP_OK;
     }
@@ -445,11 +278,27 @@ static esp_err_t ws_handler(httpd_req_t *req)
         // Process frame based on type
         if (ws_pkt.type == HTTPD_WS_TYPE_BINARY) {
             ESP_LOGD(TAG, "Received binary WebSocket frame (%d bytes) - processing as RCP", ws_pkt.len);
-            
-            // Process as RCP binary protocol
-            esp_err_t rcp_ret = rcp_process_message(ws_pkt.payload, ws_pkt.len);
-            if (rcp_ret != ESP_OK) {
-                ESP_LOGW(TAG, "RCP: Failed to process binary message: %s", esp_err_to_name(rcp_ret));
+
+            if (ws_pkt.len < RCP_HEADER_SIZE) {
+                ESP_LOGW(TAG, "RCP: Frame too small (%d bytes)", ws_pkt.len);
+            } else {
+                uint16_t declared_len = (uint16_t)ws_pkt.payload[0] | ((uint16_t)ws_pkt.payload[1] << 8);
+                uint8_t port = ws_pkt.payload[2];
+                size_t available = ws_pkt.len - RCP_HEADER_SIZE;
+                size_t body_len = declared_len;
+
+                if (body_len > available) {
+                    ESP_LOGW(TAG, "RCP: Declared body length %u exceeds available %zu, truncating", declared_len, available);
+                    body_len = available;
+                }
+
+                const uint8_t* body = ws_pkt.payload + RCP_HEADER_SIZE;
+
+                esp_err_t rcp_ret = rcp_process_message(port, body, body_len);
+                if (rcp_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "RCP: Failed to process message port=0x%02X: %s (decl_len=%u, body_len=%zu, client_fd=%d)",
+                             port, esp_err_to_name(rcp_ret), declared_len, body_len, httpd_req_to_sockfd(req));
+                }
             }
         } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
             // Log and reject text frames (RCP only supports binary)
@@ -532,6 +381,8 @@ void process_light_command(int light_value)
     ESP_LOGW(TAG, "LED control disabled in project_config.h");
 #endif
 }
+
+
 
 static esp_err_t system_info_handler(httpd_req_t *req)
 {
@@ -808,6 +659,8 @@ void http_server_start(void)
     };
     httpd_register_uri_handler(server, &system_info);
 
+
+
     httpd_uri_t httpd_get = {
         .uri       = "/*",
         .method    = HTTP_GET,
@@ -817,7 +670,7 @@ void http_server_start(void)
     httpd_register_uri_handler(server, &httpd_get);
     
     // Start WebSocket heartbeat timer
-    start_ws_heartbeat_timer();
+
     
     // Initialize RCP protocol
     esp_err_t rcp_ret = rcp_init();
@@ -834,7 +687,7 @@ void http_server_stop(void)
         ESP_LOGI(TAG, "Stopping HTTP server");
         
         // Stop WebSocket heartbeat timer
-        stop_ws_heartbeat_timer();
+
         
         // Deinitialize RCP protocol
         rcp_deinit();

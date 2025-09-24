@@ -9,8 +9,9 @@ class RCPClient {
     constructor(websocket) {
         this.ws = websocket;
         
-        // RCP Protocol constants
-        this.RCP_SYNC_BYTE = 0xAA;
+    // RCP Protocol constants
+    this.RCP_HEADER_SIZE = 3;      // [len_lo][len_hi][port]
+    this.RCP_MAX_BODY_SIZE = 256;  // Same limit as firmware
         
         // Port definitions
         this.RCP_PORTS = {
@@ -39,81 +40,18 @@ class RCPClient {
             CONFIG: 0x04        // Configuration request
         };
         
-        // Command statistics
+        // Simple command statistics
         this.stats = {
             commandsSent: 0,
-            responsesReceived: 0,
             errors: 0
         };
         
         console.log('RCP Client v1.0 initialized');
     }
     
-    /**
-     * Calculate CRC8 checksum for RCP message
-     * @param {Uint8Array} data - Message data (excluding checksum byte)
-     * @returns {number} CRC8 checksum
-     */
-    calculateChecksum(data) {
-        // CRC8 lookup table for faster computation
-        const crc8Table = new Uint8Array([
-            0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15,
-            0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
-            0x70, 0x77, 0x7E, 0x79, 0x6C, 0x6B, 0x62, 0x65,
-            0x48, 0x4F, 0x46, 0x41, 0x54, 0x53, 0x5A, 0x5D,
-            0xE0, 0xE7, 0xEE, 0xE9, 0xFC, 0xFB, 0xF2, 0xF5,
-            0xD8, 0xDF, 0xD6, 0xD1, 0xC4, 0xC3, 0xCA, 0xCD,
-            0x90, 0x97, 0x9E, 0x99, 0x8C, 0x8B, 0x82, 0x85,
-            0xA8, 0xAF, 0xA6, 0xA1, 0xB4, 0xB3, 0xBA, 0xBD,
-            0xC7, 0xC0, 0xC9, 0xCE, 0xDB, 0xDC, 0xD5, 0xD2,
-            0xFF, 0xF8, 0xF1, 0xF6, 0xE3, 0xE4, 0xED, 0xEA,
-            0xB7, 0xB0, 0xB9, 0xBE, 0xAB, 0xAC, 0xA5, 0xA2,
-            0x8F, 0x88, 0x81, 0x86, 0x93, 0x94, 0x9D, 0x9A,
-            0x27, 0x20, 0x29, 0x2E, 0x3B, 0x3C, 0x35, 0x32,
-            0x1F, 0x18, 0x11, 0x16, 0x03, 0x04, 0x0D, 0x0A,
-            0x57, 0x50, 0x59, 0x5E, 0x4B, 0x4C, 0x45, 0x42,
-            0x6F, 0x68, 0x61, 0x66, 0x73, 0x74, 0x7D, 0x7A,
-            0x89, 0x8E, 0x87, 0x80, 0x95, 0x92, 0x9B, 0x9C,
-            0xB1, 0xB6, 0xBF, 0xB8, 0xAD, 0xAA, 0xA3, 0xA4,
-            0xF9, 0xFE, 0xF7, 0xF0, 0xE5, 0xE2, 0xEB, 0xEC,
-            0xC1, 0xC6, 0xCF, 0xC8, 0xDD, 0xDA, 0xD3, 0xD4,
-            0x69, 0x6E, 0x67, 0x60, 0x75, 0x72, 0x7B, 0x7C,
-            0x51, 0x56, 0x5F, 0x58, 0x4D, 0x4A, 0x43, 0x44,
-            0x19, 0x1E, 0x17, 0x10, 0x05, 0x02, 0x0B, 0x0C,
-            0x21, 0x26, 0x2F, 0x28, 0x3D, 0x3A, 0x33, 0x34,
-            0x4E, 0x49, 0x40, 0x47, 0x52, 0x55, 0x5C, 0x5B,
-            0x76, 0x71, 0x78, 0x7F, 0x6A, 0x6D, 0x64, 0x63,
-            0x3E, 0x39, 0x30, 0x37, 0x22, 0x25, 0x2C, 0x2B,
-            0x06, 0x01, 0x08, 0x0F, 0x1A, 0x1D, 0x14, 0x13,
-            0xAE, 0xA9, 0xA0, 0xA7, 0xB2, 0xB5, 0xBC, 0xBB,
-            0x96, 0x91, 0x98, 0x9F, 0x8A, 0x8D, 0x84, 0x83,
-            0xDE, 0xD9, 0xD0, 0xD7, 0xC2, 0xC5, 0xCC, 0xCB,
-            0xE6, 0xE1, 0xE8, 0xEF, 0xFA, 0xFD, 0xF4, 0xF3
-        ]);
-        
-        let crc = this.RCP_SYNC_BYTE; // Start with sync byte value
-        
-        // Calculate CRC8 for all bytes except the last one (checksum byte)
-        for (let i = 0; i < data.length - 1; i++) {
-            crc = crc8Table[crc ^ data[i]];
-        }
-        
-        return crc;
-    }
+
     
-    /**
-     * Validate RCP message checksum
-     * @param {Uint8Array} data - Complete message data
-     * @returns {boolean} true if checksum is valid
-     */
-    validateChecksum(data) {
-        if (data.length < 3) return false;
-        
-        const receivedChecksum = data[data.length - 1];
-        const calculatedChecksum = this.calculateChecksum(data);
-        
-        return receivedChecksum === calculatedChecksum;
-    }
+
     
     /**
      * Validate RCP command parameters
@@ -135,7 +73,7 @@ class RCPClient {
         }
         
         // Validate payload size
-        if (payload.length > 14) { // Max payload size for RCP
+        if (payload.length > this.RCP_MAX_BODY_SIZE) {
             console.error('RCP: Payload too large:', payload.length);
             return false;
         }
@@ -182,22 +120,22 @@ class RCPClient {
             return false;
         }
         
-        // Create message buffer: [sync][port][payload][checksum]
-        const messageSize = 2 + payload.length + 1; // header + payload + checksum
+        // Create message buffer: [len_lo][len_hi][port][payload]
+        const messageSize = this.RCP_HEADER_SIZE + payload.length;
         const buffer = new ArrayBuffer(messageSize);
         const data = new Uint8Array(buffer);
         
-        // Fill message
-        data[0] = this.RCP_SYNC_BYTE;
-        data[1] = port;
+        // Fill header
+        data[0] = payload.length & 0xFF;
+        data[1] = (payload.length >> 8) & 0xFF;
+        data[2] = port;
         
         // Copy payload
         if (payload.length > 0) {
-            data.set(payload, 2);
+            data.set(payload, this.RCP_HEADER_SIZE);
         }
         
-        // Calculate and set checksum
-        data[messageSize - 1] = this.calculateChecksum(data);
+
         
         // Comprehensive WebSocket readiness check
         if (!this.ws) {
@@ -238,19 +176,26 @@ class RCPClient {
                 const debugData = new Uint8Array(buffer);
                 console.log('RCP: Buffer contents:', Array.from(debugData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
                 
-                // Verify message structure
-                const expectedChecksum = this.calculateChecksum(debugData);
-                const actualChecksum = debugData[debugData.length - 1];
-                console.log('RCP: Checksum validation - Expected:', expectedChecksum, 'Actual:', actualChecksum, 'Valid:', expectedChecksum === actualChecksum);
+                // Verify message structure (no checksum needed)
+                console.log('RCP: Message structure verified - no checksum validation');
+                
+                // Debug WebSocket state
+                console.log('RCP: WebSocket state:', {
+                    readyState: this.ws.readyState,
+                    binaryType: this.ws.binaryType,
+                    bufferedAmount: this.ws.bufferedAmount,
+                    protocol: this.ws.protocol
+                });
             }
             
             // Always verify critical aspects even in non-DEBUG mode
             const verifyData = new Uint8Array(buffer);
-            if (verifyData[0] !== this.RCP_SYNC_BYTE) {
-                console.error('RCP: CRITICAL - Sync byte incorrect!', verifyData[0], 'expected:', this.RCP_SYNC_BYTE);
+            const encodedLength = verifyData[0] | (verifyData[1] << 8);
+            if (encodedLength !== payload.length) {
+                console.error('RCP: CRITICAL - Length encoding incorrect!', encodedLength, 'expected:', payload.length);
             }
-            if (verifyData[1] !== port) {
-                console.error('RCP: CRITICAL - Port byte incorrect!', verifyData[1], 'expected:', port);
+            if (verifyData[2] !== port) {
+                console.error('RCP: CRITICAL - Port byte incorrect!', verifyData[2], 'expected:', port);
             }
             return true;
         } catch (error) {
@@ -326,46 +271,39 @@ class RCPClient {
     processResponse(data) {
         const view = new DataView(data);
         const dataArray = new Uint8Array(data);
-        
-        if (data.byteLength < 3) {
+
+        if (data.byteLength < this.RCP_HEADER_SIZE) {
             console.warn('RCP: Response too short');
             this.stats.errors++;
             return;
         }
-        
-        const sync = view.getUint8(0);
-        const port = view.getUint8(1);
-        
-        // Validate sync byte
-        if (sync !== this.RCP_SYNC_BYTE) {
-            console.warn(`RCP: Invalid sync byte 0x${sync.toString(16)} (expected 0x${this.RCP_SYNC_BYTE.toString(16)})`);
-            this.stats.errors++;
-            return;
+
+        const declaredLength = view.getUint16(0, true);
+        const port = view.getUint8(2);
+        const bodyStart = this.RCP_HEADER_SIZE;
+        const available = data.byteLength - bodyStart;
+        const bodyLength = Math.min(declaredLength, available);
+
+        if (declaredLength > available) {
+            console.warn(`RCP: Declared body length ${declaredLength} exceeds available ${available} bytes - truncating`);
         }
-        
-        // Validate checksum
-        if (!this.validateChecksum(dataArray)) {
-            console.warn('RCP: Response checksum mismatch');
-            this.stats.errors++;
-            return;
-        }
-        
-        this.stats.responsesReceived++;
-        
-        // Route response to appropriate handler
+
+        const bodyArray = dataArray.subarray(bodyStart, bodyStart + bodyLength);
+        const bodyView = new DataView(data, bodyStart, bodyLength);
+
         switch (port) {
             case this.RCP_PORTS.BATTERY:
-                this.processBatteryResponse(view, dataArray);
+                this.processBatteryResponse(bodyView, bodyArray);
                 break;
-                
+
             case this.RCP_PORTS.TELEMETRY:
-                this.processTelemetryResponse(view, dataArray);
+                this.processTelemetryResponse(bodyView, bodyArray);
                 break;
-                
+
             case this.RCP_PORTS.ACK:
                 if (DEBUG) console.log('RCP: Acknowledgment received');
                 break;
-                
+
             default:
                 console.warn(`RCP: Unknown response port 0x${port.toString(16)}`);
                 this.stats.errors++;
@@ -374,19 +312,19 @@ class RCPClient {
     
     /**
      * Process battery status response
-     * @param {DataView} view - Data view
-     * @param {Uint8Array} data - Raw data array
+     * @param {DataView} view - Data view over body
+     * @param {Uint8Array} data - Body data array
      */
     processBatteryResponse(view, data) {
-        if (data.length !== 7) {
+        if (data.length !== 4) {
             console.warn('RCP: Invalid battery response size');
             this.stats.errors++;
             return;
         }
         
-        const voltage_mv = view.getUint16(2, true); // Little endian
-        const level = view.getUint8(4);
-        const type = view.getUint8(5);
+        const voltage_mv = view.getUint16(0, true); // Little endian
+        const level = view.getUint8(2);
+        const type = view.getUint8(3);
         
         const voltage = voltage_mv / 1000.0;
         
@@ -401,21 +339,21 @@ class RCPClient {
     
     /**
      * Process telemetry response
-     * @param {DataView} view - Data view
-     * @param {Uint8Array} data - Raw data array
+     * @param {DataView} view - Data view over body
+     * @param {Uint8Array} data - Body data array
      */
     processTelemetryResponse(view, data) {
-        if (data.length !== 8) {
+        if (data.length !== 5) {
             console.warn('RCP: Invalid telemetry response size');
             this.stats.errors++;
             return;
         }
         
-        const speed = view.getInt8(2);        // Signed
-        const angle = view.getInt8(3);        // Signed  
-        const hornState = view.getUint8(4);
-        const lightState = view.getUint8(5);
-        const flags = view.getUint8(6);
+        const speed = view.getInt8(0);        // Signed
+        const angle = view.getInt8(1);        // Signed  
+        const hornState = view.getUint8(2);
+        const lightState = view.getUint8(3);
+        const flags = view.getUint8(4);
         
         if (DEBUG) console.log(`RCP: Telemetry - Speed: ${speed}, Angle: ${angle}, Horn: ${hornState ? 'ON' : 'OFF'}, Light: ${lightState ? 'ON' : 'OFF'}, Flags: 0x${flags.toString(16)}`);
     }
@@ -425,7 +363,55 @@ class RCPClient {
      * @returns {Object} Statistics object
      */
     getStats() {
-        return { ...this.stats };
+        return {
+            commandsSent: this.stats.commandsSent,
+            errors: this.stats.errors
+        };
+    }
+    
+    /**
+     * Get detailed diagnostics
+     * @returns {Object} Detailed diagnostics object
+     */
+    getDiagnostics() {
+        const now = Date.now();
+        const uptime = now - this.stats.connectionStartTime;
+        const avgLatency = this.stats.latencyHistory.length > 0 
+            ? this.stats.latencyHistory.reduce((a, b) => a + b, 0) / this.stats.latencyHistory.length 
+            : 0;
+        
+        return {
+            uptime: uptime,
+            uptimeFormatted: this.formatDuration(uptime),
+            connectionState: this.ws ? this.ws.readyState : -1,
+            connectionStateText: this.ws ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][this.ws.readyState] : 'NO_WEBSOCKET',
+            commandsSent: this.stats.commandsSent,
+            responsesReceived: this.stats.responsesReceived,
+            errors: this.stats.errors,
+            protocolErrors: this.stats.protocolErrors,
+            checksumErrors: this.stats.checksumErrors,
+            connectionDrops: this.stats.connectionDrops,
+            successRate: this.stats.commandsSent > 0 ? ((this.stats.responsesReceived / this.stats.commandsSent) * 100).toFixed(1) + '%' : 'N/A',
+            averageLatency: avgLatency.toFixed(1) + 'ms',
+            lastCommandTime: this.stats.lastCommandTime > 0 ? now - this.stats.lastCommandTime : 0,
+            lastResponseTime: this.stats.lastResponseTime > 0 ? now - this.stats.lastResponseTime : 0,
+            bytesSent: this.stats.bytesSent,
+            bytesReceived: this.stats.bytesReceived,
+            throughputSent: uptime > 0 ? ((this.stats.bytesSent / uptime) * 1000).toFixed(1) + ' B/s' : '0 B/s',
+            throughputReceived: uptime > 0 ? ((this.stats.bytesReceived / uptime) * 1000).toFixed(1) + ' B/s' : '0 B/s'
+        };
+    }
+    
+    /**
+     * Format duration in milliseconds to human readable string
+     * @param {number} ms - Duration in milliseconds
+     * @returns {string} Formatted duration
+     */
+    formatDuration(ms) {
+        if (ms < 1000) return ms + 'ms';
+        if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+        if (ms < 3600000) return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
+        return Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm';
     }
     
     /**
@@ -435,6 +421,15 @@ class RCPClient {
         this.stats.commandsSent = 0;
         this.stats.responsesReceived = 0;
         this.stats.errors = 0;
+        this.stats.connectionStartTime = Date.now();
+        this.stats.lastCommandTime = 0;
+        this.stats.lastResponseTime = 0;
+        this.stats.latencyHistory = [];
+        this.stats.connectionDrops = 0;
+        this.stats.protocolErrors = 0;
+        this.stats.checksumErrors = 0;
+        this.stats.bytesSent = 0;
+        this.stats.bytesReceived = 0;
     }
 }
 
@@ -494,151 +489,28 @@ function resetCommandCache() {
         wheelsCommandTimeout = null;
     }
     
-    // Reset RCP statistics
-    if (rcpClient) {
-        rcpClient.resetStats();
-    }
+
     
     console.log('Command cache reset - next commands will be sent regardless of previous values');
 }
 
-// Function to show RCP statistics
-function showRCPStats() {
-    if (rcpClient) {
-        const stats = rcpClient.getStats();
-        console.log('=== RCP Protocol Statistics ===');
-        console.log(`Commands Sent: ${stats.commandsSent}`);
-        console.log(`Responses Received: ${stats.responsesReceived}`);
-        console.log(`Errors: ${stats.errors}`);
-        console.log(`Success Rate: ${stats.commandsSent > 0 ? ((stats.commandsSent - stats.errors) / stats.commandsSent * 100).toFixed(1) : 0}%`);
-        console.log('==============================');
-        return stats;
-    } else {
-        console.log('RCP Client not initialized');
-        return null;
-    }
-}
 
-// Expose showRCPStats globally for console access
-window.showRCPStats = showRCPStats;
 
-/**
- * Check WebSocket health and log diagnostic information
- */
-function checkWebSocketHealth() {
-    if (!ws) {
-        console.warn('WebSocket Health: No WebSocket instance');
-        return false;
-    }
-    
-    const health = {
-        readyState: ws.readyState,
-        readyStateText: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState],
-        binaryType: ws.binaryType,
-        url: ws.url,
-        protocol: ws.protocol,
-        extensions: ws.extensions
-    };
-    
-    console.log('WebSocket Health Check:', health);
-    
-    if (ws.readyState !== WebSocket.OPEN) {
-        console.warn('WebSocket Health: Connection not OPEN');
-        return false;
-    }
-    
-    if (ws.binaryType !== 'arraybuffer') {
-        console.error('WebSocket Health: Binary type is not arraybuffer!');
-        return false;
-    }
-    
-    return true;
-}
 
-/**
- * Test WebSocket connectivity with a simple binary frame
- */
-function testWebSocketConnectivity() {
-    if (!checkWebSocketHealth()) {
-        console.error('WebSocket health check failed - skipping connectivity test');
-        return false;
-    }
-    
-    if (!rcpClient) {
-        console.warn('RCP Client not initialized - skipping connectivity test');
-        return false;
-    }
-    
-    try {
-        // Send a simple ping command to test connectivity
-        console.log('Testing WebSocket connectivity with RCP ping...');
-        // RCP system command requires: [command, param] = 2 bytes payload
-        const success = rcpClient.sendCommand(rcpClient.RCP_PORTS.SYSTEM, new Uint8Array([rcpClient.RCP_SYS_COMMANDS.PING, 0x00]));
-        
-        if (success) {
-            console.log('WebSocket connectivity test: PASSED');
-        } else {
-            console.error('WebSocket connectivity test: FAILED');
-        }
-        
-        return success;
-    } catch (error) {
-        console.error('WebSocket connectivity test error:', error);
-        return false;
-    }
-}
 
-/**
- * Comprehensive WebSocket diagnostics
- */
-function runWebSocketDiagnostics() {
-    console.log('=== WebSocket Diagnostics ===');
-    
-    // 1. Health check
-    const healthy = checkWebSocketHealth();
-    console.log('Health Check:', healthy ? 'PASS' : 'FAIL');
-    
-    // 2. RCP Client check
-    if (!rcpClient) {
-        console.error('RCP Client: NOT INITIALIZED');
-        return false;
-    }
-    console.log('RCP Client: OK');
-    
-    // 3. Test connectivity
-    const connected = testWebSocketConnectivity();
-    console.log('Connectivity Test:', connected ? 'PASS' : 'FAIL');
-    
-    // 4. Show RCP statistics
-    showRCPStats();
-    
-    // 5. Test different command types
-    console.log('Testing different RCP commands...');
-    
-    // Test motor command
-    const motorTest = rcpClient.sendCommand(rcpClient.RCP_PORTS.MOTOR, new Uint8Array([0]));
-    console.log('Motor Command Test:', motorTest ? 'PASS' : 'FAIL');
-    
-    // Test servo command  
-    const servoTest = rcpClient.sendCommand(rcpClient.RCP_PORTS.SERVO, new Uint8Array([0]));
-    console.log('Servo Command Test:', servoTest ? 'PASS' : 'FAIL');
-    
-    // Test horn command
-    const hornTest = rcpClient.sendCommand(rcpClient.RCP_PORTS.HORN, new Uint8Array([0]));
-    console.log('Horn Command Test:', hornTest ? 'PASS' : 'FAIL');
-    
-    // Test light command
-    const lightTest = rcpClient.sendCommand(rcpClient.RCP_PORTS.LIGHT, new Uint8Array([0]));
-    console.log('Light Command Test:', lightTest ? 'PASS' : 'FAIL');
-    
-    console.log('=== Diagnostics Complete ===');
-    return healthy && connected;
-}
 
-// Expose diagnostic functions globally
-window.checkWebSocketHealth = checkWebSocketHealth;
-window.testWebSocketConnectivity = testWebSocketConnectivity;
-window.runWebSocketDiagnostics = runWebSocketDiagnostics;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -703,7 +575,9 @@ function initWebSocket() {
             console.log('WebSocket post-connection check:', {
                 readyState: ws.readyState,
                 binaryType: ws.binaryType,
-                url: ws.url
+                url: ws.url,
+                protocol: ws.protocol,
+                extensions: ws.extensions
             });
             
             // Re-ensure binary type is set (some browsers might reset it)
@@ -719,17 +593,20 @@ function initWebSocket() {
             // Reset command cache to ensure fresh state after reconnection
             resetCommandCache();
             
-            // Run connectivity test after a short delay
-            setTimeout(() => {
-                testWebSocketConnectivity();
-            }, 1000);
+
         };
         
         ws.onmessage = (event) => {
             try {
                 // Handle binary frames (RCP responses)
                 if (event.data instanceof ArrayBuffer) {
-                    if (DEBUG) console.log(`Received binary frame (${event.data.byteLength} bytes)`);
+                    if (DEBUG) {
+                        console.log(`Received binary frame (${event.data.byteLength} bytes)`);
+                        const data = new Uint8Array(event.data);
+                        if (data.length <= 16) {
+                            console.log('Binary data:', Array.from(data).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                        }
+                    }
                     if (rcpClient) {
                         rcpClient.processResponse(event.data);
                     }
@@ -780,8 +657,58 @@ function initWebSocket() {
                 maxReconnectAttempts: maxReconnectAttempts,
                 reconnectInterval: reconnectInterval,
                 activeControls: Array.from(activeControls),
-                rcpClientExists: !!rcpClient
+                rcpClientExists: !!rcpClient,
+                errorCode: error.code || 'unknown',
+                errorType: error.type || 'unknown'
             });
+            
+            // Analyze error for intelligent recovery strategy
+            let recoveryStrategy = {
+                shouldReconnect: true,
+                delayMultiplier: 1.0,
+                reason: 'generic error'
+            };
+            
+            // Classify error type for recovery strategy
+            if (error.code) {
+                switch (error.code) {
+                    case 1006: // Abnormal closure - typically network issues
+                        recoveryStrategy = {
+                            shouldReconnect: true,
+                            delayMultiplier: 0.5, // Faster retry for network issues
+                            reason: 'network issue'
+                        };
+                        break;
+                    case 1011: // Server error
+                        recoveryStrategy = {
+                            shouldReconnect: true,
+                            delayMultiplier: 2.0, // Longer delay for server issues
+                            reason: 'server error'
+                        };
+                        break;
+                    case 1002: // Protocol error
+                    case 1003: // Unsupported data
+                        recoveryStrategy = {
+                            shouldReconnect: true,
+                            delayMultiplier: 3.0, // Much longer delay for protocol issues
+                            reason: 'protocol error'
+                        };
+                        break;
+                    case 1000: // Normal closure
+                    case 1001: // Going away
+                        recoveryStrategy = {
+                            shouldReconnect: false,
+                            delayMultiplier: 1.0,
+                            reason: 'clean disconnect'
+                        };
+                        break;
+                }
+            }
+            
+            console.log('Recovery strategy:', recoveryStrategy);
+            
+            // Store recovery strategy for use in onclose handler
+            ws._recoveryStrategy = recoveryStrategy;
             
             // Clear RCP client on error
             rcpClient = null;
@@ -799,15 +726,65 @@ function initWebSocket() {
             // Clear RCP client on disconnect
             rcpClient = null;
             
-            // Only attempt reconnection if not manually closed and under attempt limit
-            if (event.code !== 1000 && wsReconnectAttempts < maxReconnectAttempts) {
+            // Use recovery strategy from error handler or determine from close code
+            let recoveryStrategy = ws._recoveryStrategy || {
+                shouldReconnect: true,
+                delayMultiplier: 1.0,
+                reason: 'default close handler'
+            };
+            
+            // Override strategy based on close code if no error strategy exists
+            if (!ws._recoveryStrategy) {
+                switch (event.code) {
+                    case 1000: // Normal closure
+                        recoveryStrategy = { shouldReconnect: false, delayMultiplier: 1.0, reason: 'normal closure' };
+                        break;
+                    case 1001: // Going away
+                        recoveryStrategy = { shouldReconnect: false, delayMultiplier: 1.0, reason: 'server going away' };
+                        break;
+                    case 1006: // Abnormal closure (network issue)
+                        recoveryStrategy = { shouldReconnect: true, delayMultiplier: 0.5, reason: 'network issue' };
+                        break;
+                    case 1011: // Internal server error
+                        recoveryStrategy = { shouldReconnect: true, delayMultiplier: 2.0, reason: 'server error' };
+                        break;
+                    case 1002: // Protocol error
+                    case 1003: // Unsupported data
+                    case 1007: // Invalid data
+                        recoveryStrategy = { shouldReconnect: true, delayMultiplier: 3.0, reason: 'protocol/data error' };
+                        break;
+                }
+            }
+            
+            console.log('Close recovery strategy:', recoveryStrategy);
+            
+            // Only attempt reconnection based on recovery strategy
+            if (recoveryStrategy.shouldReconnect && wsReconnectAttempts < maxReconnectAttempts) {
                 wsReconnectAttempts++;
-                // Exponential backoff with jitter
-                const jitter = Math.random() * 1000;
-                const delay = Math.min(reconnectInterval * Math.pow(1.5, wsReconnectAttempts - 1) + jitter, 30000);
                 
-                console.warn(`WebSocket disconnected (attempt ${wsReconnectAttempts}/${maxReconnectAttempts}), reconnecting in ${Math.round(delay/1000)}s...`);
+                // Calculate delay using recovery strategy
+                const baseDelay = reconnectInterval * recoveryStrategy.delayMultiplier;
+                const exponentialBackoff = Math.pow(1.5, wsReconnectAttempts - 1);
+                const jitter = Math.random() * 1000;
+                const delay = Math.min(baseDelay * exponentialBackoff + jitter, 60000); // Max 60s delay
+                
+                console.warn(`WebSocket disconnected (${recoveryStrategy.reason}) - attempt ${wsReconnectAttempts}/${maxReconnectAttempts}, reconnecting in ${Math.round(delay/1000)}s...`);
                 setTimeout(initWebSocket, delay);
+                
+                // Update reconnect interval based on error type
+                if (recoveryStrategy.delayMultiplier <= 0.5) {
+                    // Network issues - moderate increase
+                    reconnectInterval = Math.min(reconnectInterval * 1.2, 10000);
+                } else if (recoveryStrategy.delayMultiplier >= 2.0) {
+                    // Server/protocol errors - faster increase
+                    reconnectInterval = Math.min(reconnectInterval * 1.8, 30000);
+                } else {
+                    // Default increase
+                    reconnectInterval = Math.min(reconnectInterval * 1.5, 20000);
+                }
+            } else if (!recoveryStrategy.shouldReconnect) {
+                console.log('Reconnection disabled:', recoveryStrategy.reason);
+                wsReconnectAttempts = maxReconnectAttempts; // Prevent further attempts
             } else if (wsReconnectAttempts >= maxReconnectAttempts) {
                 console.error('WebSocket max reconnection attempts reached. Please refresh the page.');
             }

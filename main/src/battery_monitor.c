@@ -173,48 +173,38 @@ battery_type_t battery_get_type(void)
 
 esp_err_t battery_send_voltage(float voltage)
 {
-    httpd_handle_t server = (httpd_handle_t)http_server_get_handle();
-    if (server == NULL) {
+    if (http_server_get_handle() == NULL) {
         ESP_LOGW(TAG, "WebSocket server not available");
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Convert voltage to millivolts for transmission
     uint16_t voltage_mv = (uint16_t)(voltage * 1000.0f);
-    
-    // Calculate battery level (0-10)
-    uint8_t level = 0;
-    if (battery_config.battery_type == BATTERY_TYPE_1S) {
-        // 1S LiPo: 3.0V-4.2V
-        float percentage = (voltage - 3.0f) / (4.2f - 3.0f) * 100.0f;
-        level = (uint8_t)(percentage / 10.0f);
-    } else {
-        // 2S LiPo: 6.0V-8.4V  
-        float percentage = (voltage - 6.0f) / (8.4f - 6.0f) * 100.0f;
-        level = (uint8_t)(percentage / 10.0f);
+
+    float min_voltage = (battery_config.battery_type == BATTERY_TYPE_1S) ? 3.0f : 6.0f;
+    float max_voltage = (battery_config.battery_type == BATTERY_TYPE_1S) ? 4.2f : 8.4f;
+    float percentage = ((voltage - min_voltage) / (max_voltage - min_voltage)) * 100.0f;
+
+    if (percentage < 0.0f) {
+        percentage = 0.0f;
     }
-    level = (level > 10) ? 10 : level;
-    
-    // Create RCP battery response: [sync][port][voltage_mv_low][voltage_mv_high][level][type][checksum]
-    uint8_t response[7];
-    response[0] = 0xAA;  // Sync byte
-    response[1] = 0x80;  // Battery response port
-    response[2] = voltage_mv & 0xFF;        // Voltage low byte
-    response[3] = (voltage_mv >> 8) & 0xFF; // Voltage high byte  
-    response[4] = level;                    // Battery level (0-10)
-    response[5] = battery_config.battery_type; // Battery type (1S or 2S)
-    
-    // Calculate CRC8 checksum
-    response[6] = rcp_calculate_checksum(response, sizeof(response));
-    
-    // Send binary message via WebSocket broadcast
-    esp_err_t ret = http_server_broadcast_ws_binary(response, sizeof(response));
+    if (percentage > 100.0f) {
+        percentage = 100.0f;
+    }
+
+    uint8_t level = (uint8_t)(percentage / 10.0f);
+    if (level > 10) {
+        level = 10;
+    }
+
+    uint8_t type = (uint8_t)battery_config.battery_type;
+
+    esp_err_t ret = rcp_send_battery_status(voltage_mv, level, type);
     if (ret == ESP_OK) {
         ESP_LOGD(TAG, "RCP battery message broadcasted: %.3fV, level=%d/10, type=%dS", voltage, level, battery_config.battery_type);
     } else {
         ESP_LOGW(TAG, "Failed to broadcast RCP battery message: %s", esp_err_to_name(ret));
     }
-    
+
     return ret;
 }
 
