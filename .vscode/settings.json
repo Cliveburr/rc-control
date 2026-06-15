@@ -36,5 +36,6 @@
         "http_server.h": "c",
         "project_config.h": "c"
     },
-    "idf.pythonInstallPath": "D:\\ESP32\\tools\\tools\\idf-python\\3.11.2\\python.exe"
+    "idf.pythonInstallPath": "D:\\ESP32\\tools\\tools\\idf-python\\3.11.2\\python.exe",
+    "idf.currentSetup": "D:\\ESP32\\v5.5\\esp-idf"
 }

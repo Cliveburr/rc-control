@@ -132,36 +132,45 @@ esp_err_t battery_get_voltage(float *voltage)
     if (!battery_config.enabled || adc1_handle == NULL || voltage == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    int adc_raw = 0;
-    esp_err_t ret = adc_oneshot_read(adc1_handle, battery_config.adc_channel, &adc_raw);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read ADC: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    int voltage_mv = 0;
-    if (adc_calibrated) {
-        ret = adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv);
+    // Average multiple ADC samples to reduce jitter (use calibrated conversion when available)
+    const int SAMPLES = 8;
+    int64_t sum_voltage_mv = 0;
+    for (int i = 0; i < SAMPLES; ++i) {
+        int adc_raw = 0;
+        esp_err_t ret = adc_oneshot_read(adc1_handle, battery_config.adc_channel, &adc_raw);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to convert ADC to voltage: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to read ADC: %s", esp_err_to_name(ret));
             return ret;
         }
-    } else {
-        // Fallback calculation without calibration
-        // ESP32 ADC: 4095 counts = ~3100mV with 11dB attenuation
-        voltage_mv = (adc_raw * 3100) / 4095;
+
+        if (adc_calibrated) {
+            int vm = 0;
+            ret = adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &vm);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to convert ADC to voltage: %s", esp_err_to_name(ret));
+                return ret;
+            }
+            sum_voltage_mv += vm;
+        } else {
+            // Fallback conversion for non-calibrated ADC
+            int vm = (adc_raw * 3100) / 4095;
+            sum_voltage_mv += vm;
+        }
+
+        // Small delay to allow the sample capacitor to settle when using a high impedance divider
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
+    int avg_voltage_mv = (int)(sum_voltage_mv / SAMPLES);
+
     // Convert to actual battery voltage using voltage divider formula
-    // Vbat = Vadc * (R1 + R2) / R2
-    float adc_voltage = voltage_mv / 1000.0; // Convert mV to V
+    float adc_voltage = avg_voltage_mv / 1000.0f; // Convert mV to V
     float battery_voltage = adc_voltage * (battery_config.resistor_r1 + battery_config.resistor_r2) / battery_config.resistor_r2;
-    
+
     *voltage = battery_voltage;
 
-    ESP_LOGD(TAG, "ADC Raw: %d, ADC Voltage: %.3fV, Battery Voltage: %.3fV", 
-             adc_raw, adc_voltage, battery_voltage);
+    ESP_LOGD(TAG, "ADC avg mV: %d, ADC Voltage: %.3fV, Battery Voltage: %.3fV",
+             avg_voltage_mv, adc_voltage, battery_voltage);
 
     return ESP_OK;
 }

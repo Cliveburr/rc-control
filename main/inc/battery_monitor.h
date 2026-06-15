@@ -41,15 +41,15 @@
  * - 2S LiPo: 6.0V-8.4V → 1.87V-2.61V ADC ✅ Perfect
  * - Excellent range for both battery types!
  */
-#define BATTERY_RESISTOR_R1             222000  // 222kΩ
-#define BATTERY_RESISTOR_R2             100000  // 100kΩ
+#define BATTERY_RESISTOR_R1             223000  //222000  // 222kΩ  (measured top)
+#define BATTERY_RESISTOR_R2              98000  //100000  // 100kΩ  (measured bottom)
 
 /**
  * @brief Battery type configuration
  * 1 = 1S LiPo (3.7V nominal, 3.0V-4.2V range)
  * 2 = 2S LiPo (7.4V nominal, 6.0V-8.4V range)
  */
-#define BATTERY_TYPE                    2       // 1S LiPo
+#define BATTERY_TYPE                    1       // 1S LiPo
 
 /**
  * @brief Battery reading interval in milliseconds

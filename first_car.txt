@@ -4,6 +4,24 @@ https://www.youtube.com/watch?v=bq_XX86umf0
 
 Perfeito. Abaixo vai uma arquitetura simples para 1S LiPo com ESP32, micro-servo e motor 8520, e a shopping list em inglês para procurar no AliExpress.
 
+carroceria 125mm escala 1:32
+roda 20mm
+
+- Para comprar parafusos usar a nomenclatura para busca:
+Para parafusos Lenshead: DIN 7985 Phillips M3
+Para parafusos Countersunk usar: "DIN 965 Phillips M3" ou "ISO 7046 M3"
+
+
+Eletronica do carro
+{
+drive DRV8833
+1.8A .. estol - 5A motor “8520 coreless
+200mA - servo GH-S37D
+239mA - ESP32
+}
+
+
+
 # Primeira compra
   10 motor “8520 coreless brushed motor 8.5x20mm 1.0mm
   10 DRV8833 Motor Drive Module 1.5A Dual H Bridge DC Gear Motor Driver Controller Board Kit

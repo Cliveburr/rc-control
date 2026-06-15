@@ -332,6 +332,16 @@ class RCPClient {
         
         // Update battery level in UI
         updateBatteryLevel(level);
+
+        const batteryVoltageElement = document.getElementById('batteryVoltage');
+        if (batteryVoltageElement) {
+            batteryVoltageElement.textContent = `${voltage.toFixed(2)} V`;
+        }
+
+        const batteryTypeElement = document.getElementById('batteryTypeInfo');
+        if (batteryTypeElement) {
+            batteryTypeElement.textContent = `${type}S`;
+        }
         
         // Update battery type for calculations
         batteryType = `${type}S`;
@@ -446,16 +456,12 @@ let wsReconnectAttempts = 0;
 let maxReconnectAttempts = 100;
 let reconnectInterval = 3000; // Start with 3 seconds
 
-// Command caching to avoid sending duplicate values
-let lastSpeedValue = null;
-let lastWheelsValue = null;
-let lastHornValue = null;
-let lastLightValue = null;
-
-// Command throttling to prevent spam during multi-touch
-let speedCommandTimeout = null;
-let wheelsCommandTimeout = null;
-const COMMAND_THROTTLE_MS = 50; // Minimum time between commands
+// Command buffering and periodic flush
+// Buffer holds the most-recent requested value and is flushed periodically
+const COMMAND_SEND_INTERVAL_MS = 20; // Flush interval in ms (20ms -> 50Hz)
+let commandBuffer = { speed: null, wheels: null, horn: null, light: null };
+let lastSent = { speed: null, wheels: null, horn: null, light: null };
+let commandFlushIntervalId = null;
 
 // Multi-touch monitoring
 let activeControls = new Set();
@@ -474,24 +480,84 @@ function setControlActive(controlType, active) {
 
 // Function to reset command cache (useful after reconnection)
 function resetCommandCache() {
-    lastSpeedValue = null;
-    lastWheelsValue = null;
-    lastHornValue = null;
-    lastLightValue = null;
-    
-    // Clear any pending throttled commands
-    if (speedCommandTimeout) {
-        clearTimeout(speedCommandTimeout);
-        speedCommandTimeout = null;
-    }
-    if (wheelsCommandTimeout) {
-        clearTimeout(wheelsCommandTimeout);
-        wheelsCommandTimeout = null;
-    }
-    
+    lastSent = {
+        speed: null,
+        wheels: null,
+        horn: null,
+        light: null
+    };
 
-    
-    console.log('Command cache reset - next commands will be sent regardless of previous values');
+    console.log('Command cache reset - buffered commands will be resent on next flush');
+}
+
+function normalizeCommandValue(type, value) {
+    if (typeof value !== 'number' || isNaN(value)) {
+        return null;
+    }
+
+    if (type === 'speed' || type === 'wheels') {
+        return Math.max(-100, Math.min(100, Math.round(value)));
+    }
+
+    if (type === 'horn' || type === 'light') {
+        return value ? 1 : 0;
+    }
+
+    return value;
+}
+
+function queueBufferedCommand(type, value) {
+    const normalizedValue = normalizeCommandValue(type, value);
+
+    if (normalizedValue === null) {
+        console.error(`Invalid ${type} command value:`, value);
+        return;
+    }
+
+    commandBuffer[type] = normalizedValue;
+}
+
+function flushBufferedCommands() {
+    if (DEBUG) {
+        Object.entries(commandBuffer).forEach(([type, value]) => {
+            if (value !== null && lastSent[type] !== value) {
+                console.log(`DEBUG mode: ${type} command (visual test only):`, value);
+                lastSent[type] = value;
+            }
+        });
+        return;
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN || !rcpClient) {
+        return;
+    }
+
+    Object.entries(commandBuffer).forEach(([type, value]) => {
+        if (value === null || lastSent[type] === value) {
+            return;
+        }
+
+        if (sendControlCommand(type, value)) {
+            lastSent[type] = value;
+        }
+    });
+}
+
+function startCommandFlush() {
+    if (commandFlushIntervalId !== null) {
+        return;
+    }
+
+    commandFlushIntervalId = setInterval(flushBufferedCommands, COMMAND_SEND_INTERVAL_MS);
+}
+
+function stopCommandFlush() {
+    if (commandFlushIntervalId === null) {
+        return;
+    }
+
+    clearInterval(commandFlushIntervalId);
+    commandFlushIntervalId = null;
 }
 
 
@@ -592,7 +658,9 @@ function initWebSocket() {
             
             // Reset command cache to ensure fresh state after reconnection
             resetCommandCache();
-            
+
+            startCommandFlush();
+            flushBufferedCommands();
 
         };
         
@@ -725,6 +793,7 @@ function initWebSocket() {
             
             // Clear RCP client on disconnect
             rcpClient = null;
+            stopCommandFlush();
             
             // Use recovery strategy from error handler or determine from close code
             let recoveryStrategy = ws._recoveryStrategy || {
@@ -829,41 +898,11 @@ function calculateBatteryLevel(voltage, type) {
 }
 
 function sendSpeedCommand(value) {
-    // Clear any pending speed command
-    if (speedCommandTimeout) {
-        clearTimeout(speedCommandTimeout);
-    }
-    
-    // Throttle speed commands to prevent spam during multi-touch
-    speedCommandTimeout = setTimeout(() => {
-        // Only send if value has changed
-        if (lastSpeedValue !== value) {
-            sendControlCommand('speed', value);
-            lastSpeedValue = value;
-        } else {
-            // if (DEBUG) console.log(`Speed command skipped - same value as last: ${value}`);
-        }
-        speedCommandTimeout = null;
-    }, COMMAND_THROTTLE_MS);
+    queueBufferedCommand('speed', value);
 }
 
 function sendWheelsCommand(value) {
-    // Clear any pending wheels command
-    if (wheelsCommandTimeout) {
-        clearTimeout(wheelsCommandTimeout);
-    }
-    
-    // Throttle wheels commands to prevent spam during multi-touch
-    wheelsCommandTimeout = setTimeout(() => {
-        // Only send if value has changed
-        if (lastWheelsValue !== value) {
-            sendControlCommand('wheels', value);
-            lastWheelsValue = value;
-        } else {
-            // if (DEBUG) console.log(`Wheels command skipped - same value as last: ${value}`);
-        }
-        wheelsCommandTimeout = null;
-    }, COMMAND_THROTTLE_MS);
+    queueBufferedCommand('wheels', value);
 }
 
 function sendControlCommand(type, value) {
@@ -880,27 +919,23 @@ function sendControlCommand(type, value) {
     
     if (DEBUG) {
         console.log(`DEBUG mode: ${type} command (visual test only):`, value);
-        return;
+        return true;
     }
     
     if (ws && ws.readyState === WebSocket.OPEN && rcpClient) {
         // Use RCP client for all communication
         switch (type) {
             case 'speed':
-                rcpClient.sendMotorCommand(value);
-                break;
+                return rcpClient.sendMotorCommand(value);
             case 'wheels':
-                rcpClient.sendServoCommand(value);
-                break;
+                return rcpClient.sendServoCommand(value);
             case 'horn':
-                rcpClient.sendHornCommand(value);
-                break;
+                return rcpClient.sendHornCommand(value);
             case 'light':
-                rcpClient.sendLightCommand(value);
-                break;
+                return rcpClient.sendLightCommand(value);
             default:
                 console.warn(`Unknown RCP command type: ${type}`);
-                return;
+                return false;
         }
     } else {
         console.warn(`WebSocket not connected or RCP client not available, cannot send ${type} command:`, value);
@@ -908,47 +943,16 @@ function sendControlCommand(type, value) {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
             initWebSocket();
         }
+        return false;
     }
 }
 
 function sendHornCommand(isPressed) {
-    const hornValue = isPressed ? 1 : 0;
-    
-    // Only send if value has changed
-    if (lastHornValue !== hornValue) {
-        if (DEBUG) {
-            console.log('DEBUG mode: Horn command (visual test only):', isPressed);
-            lastHornValue = hornValue;
-            return;
-        }
-        
-        if (ws && ws.readyState === WebSocket.OPEN && rcpClient) {
-            rcpClient.sendHornCommand(isPressed);
-            lastHornValue = hornValue;
-        } else {
-            console.warn('WebSocket not connected or RCP client not available, cannot send horn command:', isPressed);
-        }
-    }
+    queueBufferedCommand('horn', isPressed ? 1 : 0);
 }
 
 function sendLightCommand(isOn) {
-    const lightValue = isOn ? 1 : 0;
-    
-    // Only send if value has changed
-    if (lastLightValue !== lightValue) {
-        if (DEBUG) {
-            console.log('DEBUG mode: Light command (visual test only):', isOn);
-            lastLightValue = lightValue;
-            return;
-        }
-        
-        if (ws && ws.readyState === WebSocket.OPEN && rcpClient) {
-            rcpClient.sendLightCommand(isOn);
-            lastLightValue = lightValue;
-        } else {
-            console.warn('WebSocket not connected or RCP client not available, cannot send light command:', isOn);
-        }
-    }
+    queueBufferedCommand('light', isOn ? 1 : 0);
 }
 
 function initGenericControl(controlType, sendCommandFunc) {
