@@ -27,9 +27,10 @@ GND     -->  GND (marrom/preto)
 ### Configuração PWM
 - **Frequência**: 50Hz (período de 20ms)
 - **Largura de pulso**:
-  - 1.0ms = -90° (máximo à esquerda)
-  - 1.5ms = 0° (centro)
-  - 2.0ms = +90° (máximo à direita)
+  - 1.0ms = mínimo configurado
+  - 1.5ms = centro
+  - 2.0ms = máximo configurado
+- **Importante**: esses pulsos definem o range elétrico enviado ao servo. O ângulo mecânico real depende do modelo do servo, da tensão e da linkagem. Em muitos microservos, 1.0-2.0ms resulta em algo perto de 90° totais, ou cerca de 45° para cada lado a partir do centro.
 - **Resolução**: 13 bits (8192 níveis)
 - **Timer LEDC**: TIMER_1
 - **Canal LEDC**: CHANNEL_1
@@ -45,9 +46,9 @@ GND     -->  GND (marrom/preto)
 ```
 
 **Valores do comando:**
-- `-100` = Máximo à esquerda (-90°)
-- `0` = Centro (0°)
-- `+100` = Máximo à direita (+90°)
+- `-100` = pulso mínimo configurado
+- `0` = centro
+- `+100` = pulso máximo configurado
 
 ### Função de Controle
 ```c
@@ -86,6 +87,7 @@ Se necessário ajustar o centro mecânico:
 Para evitar danos mecânicos:
 1. Ajustar `SERVO_MIN_PULSE_WIDTH` e `SERVO_MAX_PULSE_WIDTH`
 2. Testar movimento completo antes de finalizar montagem
+3. Confirmar o curso real do servo antes de assumir 180° totais com 1.0-2.0ms
 
 ## Troubleshooting
 

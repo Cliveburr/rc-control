@@ -456,6 +456,14 @@ let wsReconnectAttempts = 0;
 let maxReconnectAttempts = 100;
 let reconnectInterval = 3000; // Start with 3 seconds
 
+const STEERING_PRESETS = {
+    default: { min_pulse_width: 1000, center_pulse_width: 1500, max_pulse_width: 2000 },
+    conservative: { min_pulse_width: 1100, center_pulse_width: 1500, max_pulse_width: 1900 },
+    amplified: { min_pulse_width: 900, center_pulse_width: 1500, max_pulse_width: 2100 }
+};
+
+let steeringPreviewTimerId = null;
+
 // Command buffering and periodic flush
 // Buffer holds the most-recent requested value and is flushed periodically
 const COMMAND_SEND_INTERVAL_MS = 20; // Flush interval in ms (20ms -> 50Hz)
@@ -953,6 +961,182 @@ function sendHornCommand(isPressed) {
 
 function sendLightCommand(isOn) {
     queueBufferedCommand('light', isOn ? 1 : 0);
+}
+
+function clampSteeringValue(value, fallback) {
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+        return fallback;
+    }
+
+    return Math.round(Math.max(500, Math.min(2500, numericValue)));
+}
+
+function getSteeringElements(root = document) {
+    return {
+        status: root.querySelector('#steeringStatus'),
+        minInput: root.querySelector('#steeringMinPulse'),
+        maxInput: root.querySelector('#steeringMaxPulse'),
+        centerSlider: root.querySelector('#steeringCenterSlider'),
+        centerValue: root.querySelector('#steeringCenterValue'),
+        sliderMinLabel: root.querySelector('#steeringSliderMinLabel'),
+        sliderMaxLabel: root.querySelector('#steeringSliderMaxLabel')
+    };
+}
+
+function setSteeringStatus(message, isError = false, root = document) {
+    const { status } = getSteeringElements(root);
+
+    if (!status) {
+        return;
+    }
+
+    status.textContent = message;
+    status.classList.toggle('error', isError);
+}
+
+function syncSteeringSliderBounds(root = document) {
+    const { minInput, maxInput, centerSlider, sliderMinLabel, sliderMaxLabel } = getSteeringElements(root);
+
+    if (!minInput || !maxInput || !centerSlider) {
+        return;
+    }
+
+    let minPulseWidth = clampSteeringValue(minInput.value, STEERING_PRESETS.default.min_pulse_width);
+    let maxPulseWidth = clampSteeringValue(maxInput.value, STEERING_PRESETS.default.max_pulse_width);
+
+    if (minPulseWidth >= maxPulseWidth) {
+        maxPulseWidth = minPulseWidth + 1;
+    }
+
+    centerSlider.min = String(minPulseWidth);
+    centerSlider.max = String(maxPulseWidth);
+
+    const sliderValue = clampSteeringValue(centerSlider.value, STEERING_PRESETS.default.center_pulse_width);
+    const clampedSliderValue = Math.max(minPulseWidth, Math.min(maxPulseWidth, sliderValue));
+    centerSlider.value = String(clampedSliderValue);
+
+    if (sliderMinLabel) {
+        sliderMinLabel.textContent = `${minPulseWidth} us`;
+    }
+
+    if (sliderMaxLabel) {
+        sliderMaxLabel.textContent = `${maxPulseWidth} us`;
+    }
+}
+
+function updateSteeringCenterLabel(root = document) {
+    const { centerSlider, centerValue } = getSteeringElements(root);
+
+    if (!centerSlider || !centerValue) {
+        return;
+    }
+
+    centerValue.textContent = `${centerSlider.value} us`;
+}
+
+function getSteeringDraft(root = document) {
+    const { minInput, maxInput, centerSlider } = getSteeringElements(root);
+
+    return {
+        min_pulse_width: clampSteeringValue(minInput?.value, STEERING_PRESETS.default.min_pulse_width),
+        center_pulse_width: clampSteeringValue(centerSlider?.value, STEERING_PRESETS.default.center_pulse_width),
+        max_pulse_width: clampSteeringValue(maxInput?.value, STEERING_PRESETS.default.max_pulse_width)
+    };
+}
+
+function applySteeringDraft(config, root = document) {
+    const { minInput, maxInput, centerSlider } = getSteeringElements(root);
+
+    if (!minInput || !maxInput || !centerSlider) {
+        return;
+    }
+
+    minInput.value = String(config.min_pulse_width);
+    maxInput.value = String(config.max_pulse_width);
+    centerSlider.value = String(config.center_pulse_width);
+
+    syncSteeringSliderBounds(root);
+    updateSteeringCenterLabel(root);
+}
+
+async function loadSteeringConfig(root = document) {
+    setSteeringStatus('Carregando configuração de direção...', false, root);
+
+    try {
+        const response = await fetch('/api/steering-config');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        applySteeringDraft(data, root);
+        setSteeringStatus('Configuração carregada. Ajuste os valores e grave quando estiver satisfeito.', false, root);
+    } catch (error) {
+        console.error('Erro ao carregar configuração de direção:', error);
+        setSteeringStatus('Erro ao carregar configuração de direção.', true, root);
+    }
+}
+
+async function postSteeringConfig(payload, persist, root = document) {
+    const response = await fetch('/api/steering-config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ...payload, persist })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+}
+
+function scheduleSteeringPreview(root = document) {
+    if (steeringPreviewTimerId !== null) {
+        clearTimeout(steeringPreviewTimerId);
+    }
+
+    steeringPreviewTimerId = setTimeout(async () => {
+        steeringPreviewTimerId = null;
+
+        try {
+            const { centerSlider } = getSteeringElements(root);
+            await postSteeringConfig({
+                center_pulse_width: clampSteeringValue(centerSlider?.value, STEERING_PRESETS.default.center_pulse_width)
+            }, false, root);
+            setSteeringStatus('Preview aplicado em tempo real. Clique em Gravar para persistir.', false, root);
+        } catch (error) {
+            console.error('Erro ao aplicar preview da direção:', error);
+            setSteeringStatus('Preview inválido. Verifique min, centro e max.', true, root);
+        }
+    }, 75);
+}
+
+function applySteeringPreset(presetName, root = document) {
+    const preset = STEERING_PRESETS[presetName];
+
+    if (!preset) {
+        return;
+    }
+
+    applySteeringDraft(preset, root);
+    setSteeringStatus('Preset aplicado na tela. Clique em Gravar para persistir.', false, root);
+}
+
+async function saveSteeringConfig(root = document) {
+    try {
+        const data = await postSteeringConfig(getSteeringDraft(root), true, root);
+        applySteeringDraft(data, root);
+        setSteeringStatus('Configuração de direção salva com sucesso.', false, root);
+    } catch (error) {
+        console.error('Erro ao salvar configuração de direção:', error);
+        setSteeringStatus('Não foi possível salvar a configuração de direção.', true, root);
+    }
 }
 
 function initGenericControl(controlType, sendCommandFunc) {
@@ -1507,18 +1691,46 @@ function netCtr(view) {
     
     // Load OTA status when OTA tab is clicked
     view.html.querySelector('#tabOTA').addEventListener('click', loadOTAStatus);
+
+    // Load steering config when steering tab is clicked
+    view.html.querySelector('#tabSteering').addEventListener('click', () => loadSteeringConfig(view.html));
     
     // Load system info when Info tab is clicked
     view.html.querySelector('#tabInfo').addEventListener('click', loadSystemInfo);
     
     // WiFi configuration save
     view.html.querySelector('#saveWifiConfig').addEventListener('click', saveWifiConfig);
+
+    // Steering configuration save
+    view.html.querySelector('#saveSteeringConfig').addEventListener('click', () => saveSteeringConfig(view.html));
+
+    view.html.querySelector('#steeringPresetDefault').addEventListener('click', () => applySteeringPreset('default', view.html));
+    view.html.querySelector('#steeringPresetSafe').addEventListener('click', () => applySteeringPreset('conservative', view.html));
+    view.html.querySelector('#steeringPresetWide').addEventListener('click', () => applySteeringPreset('amplified', view.html));
+
+    view.html.querySelector('#steeringCenterSlider').addEventListener('input', () => {
+        updateSteeringCenterLabel(view.html);
+        scheduleSteeringPreview(view.html);
+    });
+
+    view.html.querySelector('#steeringMinPulse').addEventListener('input', () => {
+        syncSteeringSliderBounds(view.html);
+        updateSteeringCenterLabel(view.html);
+    });
+
+    view.html.querySelector('#steeringMaxPulse').addEventListener('input', () => {
+        syncSteeringSliderBounds(view.html);
+        updateSteeringCenterLabel(view.html);
+    });
     
     // OTA upload functionality
     view.html.querySelector('#uploadOTA').addEventListener('click', uploadOTAFirmware);
     
     // System info refresh button
     view.html.querySelector('#refreshSystemInfo').addEventListener('click', loadSystemInfo);
+
+    applySteeringDraft(STEERING_PRESETS.default, view.html);
+    setSteeringStatus('Abra a aba Direção para carregar os valores salvos.', false, view.html);
     
     // Close button (if added later)
     // view.setOnclick('conf_close', () => {

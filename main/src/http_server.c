@@ -1,5 +1,7 @@
 #include <sys/unistd.h>
 #include <sys/socket.h>
+#include <stdlib.h>
+#include <string.h>
 #include <esp_timer.h>
 #include <esp_log.h>
 #include <esp_http_server.h>
@@ -9,8 +11,10 @@
 #include <soc/soc.h>
 #include <soc/rtc.h>
 #include <esp_partition.h>
+#include <cJSON.h>
 
 #include "project_config.h"
+#include "config.h"
 #include "http_server.h"
 #include "ota.h"
 #include "rcp_protocol.h"
@@ -49,6 +53,137 @@ static httpd_handle_t server = NULL;
 
 static int ws_client_fds[MAX_WS_CLIENTS];
 static int ws_client_count = 0;
+
+static esp_err_t json_response(httpd_req_t *req, const char *payload)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, payload, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t read_request_body(httpd_req_t *req, char **body)
+{
+    if (req->content_len <= 0 || req->content_len > 512) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    char *buffer = calloc(1, req->content_len + 1);
+    if (buffer == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    int total_read = 0;
+    while (total_read < req->content_len) {
+        int read_now = httpd_req_recv(req, buffer + total_read, req->content_len - total_read);
+        if (read_now == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+
+        if (read_now <= 0) {
+            free(buffer);
+            return ESP_FAIL;
+        }
+
+        total_read += read_now;
+    }
+
+    buffer[req->content_len] = '\0';
+    *body = buffer;
+    return ESP_OK;
+}
+
+static esp_err_t steering_config_get_handler(httpd_req_t *req)
+{
+#if !ENABLE_SERVO_CONTROL
+    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "Servo control disabled");
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    config_data_t config_data = config_load();
+    char response[192];
+    snprintf(response,
+             sizeof(response),
+             "{\"min_pulse_width\":%u,\"center_pulse_width\":%u,\"max_pulse_width\":%u}",
+             config_data.steering_min_pulse_width,
+             config_data.steering_center_pulse_width,
+             config_data.steering_max_pulse_width);
+    return json_response(req, response);
+#endif
+}
+
+static esp_err_t steering_config_post_handler(httpd_req_t *req)
+{
+#if !ENABLE_SERVO_CONTROL
+    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "Servo control disabled");
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    char *request_body = NULL;
+    esp_err_t ret = read_request_body(req, &request_body);
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ret;
+    }
+
+    cJSON *root = cJSON_Parse(request_body);
+    free(request_body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON payload");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    servo_calibration_t calibration;
+    ret = servo_control_get_calibration(&calibration);
+    if (ret != ESP_OK) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read current calibration");
+        return ret;
+    }
+
+    cJSON *min_item = cJSON_GetObjectItemCaseSensitive(root, "min_pulse_width");
+    cJSON *center_item = cJSON_GetObjectItemCaseSensitive(root, "center_pulse_width");
+    cJSON *max_item = cJSON_GetObjectItemCaseSensitive(root, "max_pulse_width");
+    cJSON *persist_item = cJSON_GetObjectItemCaseSensitive(root, "persist");
+    bool persist = cJSON_IsTrue(persist_item) || (cJSON_IsNumber(persist_item) && persist_item->valueint != 0);
+
+    if (cJSON_IsNumber(min_item)) {
+        calibration.min_pulse_width = (uint16_t)min_item->valueint;
+    }
+
+    if (cJSON_IsNumber(center_item)) {
+        calibration.center_pulse_width = (uint16_t)center_item->valueint;
+    }
+
+    if (cJSON_IsNumber(max_item)) {
+        calibration.max_pulse_width = (uint16_t)max_item->valueint;
+    }
+
+    cJSON_Delete(root);
+
+    ret = servo_control_apply_calibration(&calibration, true);
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid steering calibration values");
+        return ret;
+    }
+
+    if (persist) {
+        config_data_t config_data = config_load();
+        config_data.steering_min_pulse_width = calibration.min_pulse_width;
+        config_data.steering_center_pulse_width = calibration.center_pulse_width;
+        config_data.steering_max_pulse_width = calibration.max_pulse_width;
+        config_save(config_data);
+    }
+
+    char response[224];
+    snprintf(response,
+             sizeof(response),
+             "{\"status\":\"ok\",\"persisted\":%s,\"min_pulse_width\":%u,\"center_pulse_width\":%u,\"max_pulse_width\":%u}",
+             persist ? "true" : "false",
+             calibration.min_pulse_width,
+             calibration.center_pulse_width,
+             calibration.max_pulse_width);
+
+    return json_response(req, response);
+#endif
+}
 
 // Function to add WebSocket client
 static void add_ws_client(int fd) {
@@ -658,6 +793,22 @@ void http_server_start(void)
         .user_ctx  = NULL
     };
     httpd_register_uri_handler(server, &system_info);
+
+    httpd_uri_t steering_config_get = {
+        .uri       = "/api/steering-config",
+        .method    = HTTP_GET,
+        .handler   = steering_config_get_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &steering_config_get);
+
+    httpd_uri_t steering_config_post = {
+        .uri       = "/api/steering-config",
+        .method    = HTTP_POST,
+        .handler   = steering_config_post_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &steering_config_post);
 
 
 

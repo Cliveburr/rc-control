@@ -18,6 +18,9 @@ typedef struct {
    uint8_t softap_channel;
    char station_ssid[33];
    char station_password[10];
+   uint16_t steering_min_pulse_width;
+   uint16_t steering_center_pulse_width;
+   uint16_t steering_max_pulse_width;
 } config_data_t;
 
 void config_init(void);

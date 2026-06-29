@@ -8,12 +8,19 @@
 
 #define STORAGE_NAMESPACE "config"
 #define MAIN_KEY "main_config"
-#define VERSION 10
+#define VERSION 11
+#define DEFAULT_STEERING_MIN_PULSE_WIDTH 1000
+#define DEFAULT_STEERING_CENTER_PULSE_WIDTH 1500
+#define DEFAULT_STEERING_MAX_PULSE_WIDTH 2000
 static const char *TAG = "config";
 
 void config_set_default(config_data_t *config_data)
 {
     ESP_LOGI(TAG, "config_set_default");
+
+    memset(config_data, 0, sizeof(*config_data));
+
+    config_data->version = VERSION;
 
     config_data->net_mode = config_net_mode_station;
 
@@ -27,6 +34,10 @@ void config_set_default(config_data_t *config_data)
 
     strncpy(config_data->station_ssid, "Matrix\0", sizeof(config_data->station_ssid) - 1);
     strncpy(config_data->station_password, "12346666\0", sizeof(config_data->station_password) - 1);
+
+    config_data->steering_min_pulse_width = DEFAULT_STEERING_MIN_PULSE_WIDTH;
+    config_data->steering_center_pulse_width = DEFAULT_STEERING_CENTER_PULSE_WIDTH;
+    config_data->steering_max_pulse_width = DEFAULT_STEERING_MAX_PULSE_WIDTH;
 
 }
 
@@ -49,6 +60,8 @@ config_data_t config_load(void)
     config_data_t config_data;
     nvs_handle_t my_handle;
     esp_err_t err;
+
+    config_set_default(&config_data);
 
     err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
     if (err != ESP_OK)
@@ -97,6 +110,8 @@ void config_save(config_data_t config_data)
 {
     nvs_handle_t my_handle;
     esp_err_t err;
+
+    config_data.version = VERSION;
 
     err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
     if (err != ESP_OK)

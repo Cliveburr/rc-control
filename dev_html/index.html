@@ -76,6 +76,7 @@
                         <ul>
                             <li id="tabGeneral" class="tab-item active">General</li>
                             <li id="tabWifi" class="tab-item">Wifi</li>
+                            <li id="tabSteering" class="tab-item">Direção</li>
                             <li id="tabOTA" class="tab-item">Update</li>
                             <li id="tabInfo" class="tab-item">Info</li>
                         </ul>
@@ -96,6 +97,35 @@
                                 <input id="wifiPassword" type="password" placeholder="Senha da rede WiFi" />
                                 <div class="button-group">
                                     <button id="saveWifiConfig">Gravar</button>
+                                </div>
+                            </div>
+                            <div id="tabSteeringContent" class="tab-panel">
+                                <h3>Direção</h3>
+                                <div id="steeringStatus" class="status-info">
+                                    Carregando configuração de direção...
+                                </div>
+                                <label>Min (us):</label>
+                                <input id="steeringMinPulse" type="number" min="500" max="2500" step="1" />
+                                <label>Max (us):</label>
+                                <input id="steeringMaxPulse" type="number" min="500" max="2500" step="1" />
+                                <div class="preset-group">
+                                    <button id="steeringPresetDefault" type="button">Default</button>
+                                    <button id="steeringPresetSafe" type="button">Conservador</button>
+                                    <button id="steeringPresetWide" type="button">Ampliado</button>
+                                </div>
+                                <div class="steering-slider-group">
+                                    <div class="steering-slider-header">
+                                        <label for="steeringCenterSlider">Calibração de centro</label>
+                                        <span id="steeringCenterValue">1500 us</span>
+                                    </div>
+                                    <input id="steeringCenterSlider" type="range" min="500" max="2500" step="1" />
+                                    <div class="steering-slider-scale">
+                                        <span id="steeringSliderMinLabel">500 us</span>
+                                        <span id="steeringSliderMaxLabel">2500 us</span>
+                                    </div>
+                                </div>
+                                <div class="button-group">
+                                    <button id="saveSteeringConfig">Gravar</button>
                                 </div>
                             </div>
                             <div id="tabOTAContent" class="tab-panel">

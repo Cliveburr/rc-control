@@ -479,6 +479,61 @@ button {
     gap: 10px;
 }
 
+.preset-group {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.preset-group button {
+    min-width: 120px;
+}
+
+.steering-slider-group {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    background-color: #f8f9fa;
+}
+
+.steering-slider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.steering-slider-header label {
+    margin-bottom: 0;
+}
+
+.steering-slider-header span,
+.steering-slider-scale {
+    font-family: monospace;
+    color: #495057;
+}
+
+.steering-slider-group input[type="range"] {
+    width: 100%;
+    margin: 0;
+}
+
+.steering-slider-scale {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.status-info.error {
+    color: #842029;
+    background-color: #f8d7da;
+    border-color: #f5c2c7;
+}
+
 .status-info {
     background-color: #f8f9fa;
     border: 1px solid #dee2e6;
