@@ -176,3 +176,22 @@ Voce ja tem M2 e M3, e para um chassi de 15 cm isso ainda cobre o projeto.
 - Linkagem 0.8 mm a 1.2 mm
 - Parafusos M2 e M3
 
+
+
+
+
+
+- Pneu(Tire)
+- Roda(Wheel), tem q ter o furo central e o encaixe xegagonal para encaixar no cubo da roda
+- Cubo da roda(WheelHub), da suporte para a rosca da roda, o eixo de roda passa por ela e ela fica encostada com espaçador no rolamento do manga do eixo
+- Manga do eixo(SteeringKnuckle)
+- HubCarrier
+
+
+V1
+
+Eixo 2mm
+Rolamento 2x5x2.5mm
+
+- Comprar cossinete 2mm
+
